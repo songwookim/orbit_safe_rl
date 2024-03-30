@@ -1,0 +1,48 @@
+# Reference: https://github.com/DLR-RM/rl-baselines3-zoo/blob/master/hyperparams/ppo.yml#L32
+
+seed:
+  seed: 42
+base:
+  n_timesteps: !!float 1e6
+  policy: "MlpPolicy"
+  n_steps: 1024 # n_steps: 2048
+  batch_size: 64 # default: 4096
+  gae_lambda: 0.95 # gae_lambda: 0.98
+  gamma: 0.99
+  n_epochs: 20 # n_epochs: 10
+  ent_coef: 0.01 # ent_coef: 0.0
+  learning_rate: !!float 3e-4
+  clip_range: !!float 0.2 # clip_range: 0.15
+  # policy_kwargs: "dict(
+  #                   activation_fn=nn.ELU,
+  #                   net_arch=[32, 32],
+  #                   squash_output=False,
+  #                 )"
+  policy_kwargs:
+    use_beta_dist: True # True
+    log_std_init: 0.0
+  vf_coef: 1.0 # vf_coef: 0.5
+  max_grad_norm: 1.0 # max_grad_norm: 0.5
+  target_kl: 0.02
+
+  # added
+  # create_eval_env: False
+  seed: 42
+  device: "cpu"
+
+safe_rl:
+  safe_mult: True # True
+  safe_lagrange: True # True
+  gamma_col_net: 0.6 # 0.95
+  col_reward: -100 # -1
+  tau: 0.005
+  lr_schedule_step: 4
+  td_lambda_col_target: 0.98
+  use_bayes: False
+  l_multiplier_init: 0.1 # 1.0
+  n_epochs_value_multiplier: 2
+  advantage_mode: "V1a"
+  n_lagrange_samples: 1
+  n_col_value_samples: 20
+  optimize_gamma_col_net: False
+  gamma_col_net_target: 0.8

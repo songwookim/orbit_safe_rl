@@ -41,7 +41,7 @@ class PPO:
         lagrange_penalty_mean=[],
         lagrange_penalty_var=[],
         collision_reward : int = -10,
-        gamma_col_net : float = 0.99,
+        gamma_col_net : float = 1.0,
     ):
         self.device = device
 
@@ -53,9 +53,17 @@ class PPO:
         self.actor_critic = actor_critic 
         self.actor_critic.to(self.device)
         self.storage = None  # initialized later
-        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
+        
+        # ==== safety term ====
+        # safety_critic 부분을 제외한 파라미터 선택
+        self.parameters_to_optimize = []
+        for name, param in self.actor_critic.named_parameters():
+            if 'safety_critic' not in name:
+                self.parameters_to_optimize.append(param)
+        # self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
+        self.optimizer = optim.Adam(self.parameters_to_optimize, lr=learning_rate)
         self.transition = CollisionRolloutStorage.Transition()
-
+        
         # PPO parameters
         self.clip_param = clip_param
         self.num_learning_epochs = num_learning_epochs
@@ -73,7 +81,7 @@ class PPO:
         self.l_multiplier = l_multiplier_init
         self.n_lagrange_samples = n_lagrange_samples
         self.collision_reward = collision_reward
-        self.gamma_col_net = gamma_col_net=0.99
+        self.gamma_col_net = gamma_col_net=1.0
 
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape): 
         # 현재 state로 부터 다음 state value를 최대화하는 action을 찾기 위해 다음 action을  eval
@@ -215,7 +223,6 @@ class PPO:
             surrogate_clipped = -torch.squeeze(advantages_batch) * torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) # policy_loss_1
             surrogate_loss = torch.max(surrogate, surrogate_clipped).mean() # policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
             
-
             # Value function loss
             if self.use_clipped_value_loss:
                 value_clipped = target_values_batch + (value_batch - target_values_batch).clamp(
@@ -263,7 +270,8 @@ class PPO:
                 self.l_multiplier = max(0.05, self.l_multiplier + 1e-4 * (c.mean().item() - 0.1))
             self.optimizer.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
+            # nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm) 
+            nn.utils.clip_grad_norm_(self.parameters_to_optimize, self.max_grad_norm) 
             self.optimizer.step()
 
             mean_value_loss += value_loss.item()
@@ -275,7 +283,7 @@ class PPO:
             # optimize collision network
             # col_prob_targets_batch = torch.zeros_like(critic_obs_batch[:,0]) #################################
             current_col_prob = self.actor_critic.forward_safety_critic(obs_batch, actions_batch)
-            target = col_prob_targets_batch.view(-1, 1)+0.5 # 텐서 크기 (?,1) 로 변환
+            target = col_prob_targets_batch.view(-1, 1) # 텐서 크기 (?,1) 로 변환
             col_net_loss = 0.5 * sum([weighted_bce(pred, target) for pred in current_col_prob])
             # col_net_losses.append(col_net_loss.item())
             self.actor_critic.safety_critic_optimizer.zero_grad()

@@ -17,13 +17,7 @@ from omni.isaac.orbit.managers import TerminationTermCfg as DoneTerm
 from omni.isaac.orbit.scene import InteractiveSceneCfg
 from omni.isaac.orbit.utils import configclass
 
-import os
-import sys
-sys.path.append(os.path.dirname(os.path.abspath(os.path.dirname(__file__))))
-import cartpole.mdp as mdp
-
-
-
+import omni.isaac.orbit_tasks.classic.cartpole.mdp as mdp
 
 ##
 # Pre-defined configs
@@ -106,7 +100,7 @@ class EventCfg:
     """Configuration for events."""
 
     # reset
-    reset_cart_position = EventTerm(    # cart의 위치를 랜덤하게 초기화
+    reset_cart_position = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
@@ -116,7 +110,7 @@ class EventCfg:
         },
     )
 
-    reset_pole_position = EventTerm(    # pole의 위치를 랜덤하게 초기화 
+    reset_pole_position = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
@@ -134,7 +128,7 @@ class RewardsCfg:
     # (1) Constant running reward
     alive = RewTerm(func=mdp.is_alive, weight=1.0)
     # (2) Failure penalty
-    terminating = RewTerm(func=mdp.is_terminated, weight=-2.0)
+    terminating = RewTerm(func=mdp.is_terminated, weight=-10.0)
     # (3) Primary task: keep pole upright
     pole_pos = RewTerm(
         func=mdp.joint_pos_target_l2,
@@ -165,16 +159,13 @@ class TerminationsCfg:
     cart_out_of_bounds = DoneTerm(
         func=mdp.joint_pos_manual_limit,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]), "bounds": (-3.0, 3.0)},
-        # params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]), "bounds": (-0.5, 0.5)},
     )
-    
-    # # (3) for Safety
-    # safety_out = DoneTerm(
-    #     func=mdp.joint_pos_manual_limit,
-    #     params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]), "bounds": (-3.0, 3.0)},
-    #     # params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]), "bounds": (-0.5, 0.5)},
-    # )
 
+    # (3) Pole out of bounds
+    pole_out_of_bounds = DoneTerm(
+        func=mdp.joint_pos_manual_limit,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"]), "bounds": (-0.1, 0.1)},
+    )
 
 @configclass
 class CurriculumCfg:

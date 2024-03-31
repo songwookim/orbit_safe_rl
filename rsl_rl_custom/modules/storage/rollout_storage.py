@@ -245,20 +245,20 @@ class CollisionRolloutStorage:
         self.step = 0
         
         # ==== Safety Term ====
-        buffer_size = 1024
-        self.collision_prob = torch.zeros(buffer_size, num_envs, 1, device=self.device) # estimated probability of collision P(x,a)
-        self.collision_prob_policy = torch.zeros(buffer_size, num_envs, 1, device=self.device) # estimated probability of collisions by sampling from policy P(x)
+        # buffer_size = 16
+        self.collision_prob = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device) # estimated probability of collision P(x,a)
+        self.collision_prob_policy = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device) # estimated probability of collisions by sampling from policy P(x)
         self.collision_panalty = collision_reward 
         self.min_reward = 0
-        self.min_value = torch.tensor(0).cuda() # type: ignore
-        self.collision_prob_target = torch.zeros(buffer_size, num_envs, device=self.device) # type: ignore
-        self.collision_rewards = torch.zeros(buffer_size, num_envs, device=self.device)  # type: ignore
+        self.min_value = torch.tensor(0).cuda() 
+        self.collision_prob_target = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device) # type: ignore
+        self.collision_rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)  # type: ignore
         
 
     def add_transitions(self, transition: Transition):
         if self.step >= self.num_transitions_per_env:
             raise AssertionError("Rollout buffer overflow")
-        self.observations[self.step].copy_(transition.observations)
+        self.observations[self.step].copy_(transition.observations) # 64 = 4096
         if self.privileged_observations is not None:
             self.privileged_observations[self.step].copy_(transition.critic_observations)
         self.actions[self.step].copy_(transition.actions)
@@ -269,12 +269,15 @@ class CollisionRolloutStorage:
         self.mu[self.step].copy_(transition.action_mean)
         self.sigma[self.step].copy_(transition.action_sigma)
         self._save_hidden_states(transition.hidden_states)
-        self.step += 1
         
         # ==== Safety Term ====
         self.collision_prob[self.step].copy_(transition.collision_prob)
         self.collision_prob_policy[self.step].copy_(transition.collision_prob_policy)
-        self.collision_rewards[self.step] = torch.Tensor(transition.rewards  < 0.99 * self.collision_panalty).cuda() # type: ignore
+        self.collision_rewards[self.step] = torch.Tensor(transition.rewards  < 0.99 * self.collision_panalty).cuda().view(-1,1) # type: ignore
+        
+        self.step += 1
+        
+
         
     def _save_hidden_states(self, hidden_states):
         if hidden_states is None or hidden_states == (None, None):
@@ -314,14 +317,13 @@ class CollisionRolloutStorage:
         # 3. 
         if safe_multi:
             self.returns, self.qs = self.compute_critic_targets(last_values, gamma, lam, safe_multi)
-        # else:  
-            # self.returns, self.qs = self.compute_critic_targets(last_values, gamma, lam, safe_multi)
             batch_min_value = torch.min(torch.min(self.qs), torch.min(self.values))
             self.min_value = torch.min(self.min_value, batch_min_value)
         
         # Modes:
         # V1a:  A = [r + y * (V(x') - Vmin) * P(x'))] - (V(x) - Vmin) * P(x)
-        advantage = 0 # Truncated GAE
+        advantage = 0 # 16 x 4096 x 1 # Truncated GAE
+        last_gae_lam = 0
         
         # last_gae_lam = 0 
         # ==== safety term ====
@@ -332,8 +334,8 @@ class CollisionRolloutStorage:
             if step == self.num_transitions_per_env - 1:
                 next_values = last_values
                 # ==== safety term ====
-                next_col_prob = last_collision_prob_value.flatten()
-                next_collision_prob_policy = last_collision_prob_policy.flatten()
+                next_col_prob = last_collision_prob_value
+                next_collision_prob_policy = last_collision_prob_policy
             else:
                 next_values = self.values[step + 1]
                 
@@ -343,24 +345,24 @@ class CollisionRolloutStorage:
             # Reward Clipping:
             if safe_multi:
                 # gae version
-                reward = torch.clip(self.rewards[step], min=self.min_reward, max=torch.inf).flatten() # type: ignㅐㄱㄷ
+                reward = torch.clip(self.rewards[step], min=self.min_reward, max=torch.inf)# type: ignore
             else :
                 reward = self.rewards[step]       
                 
             if safe_multi:
-                next_values = next_values.flatten()
-                next_is_not_terminal = 1.0 - self.dones[step].float().flatten() # done 이면 0, 아니면 1
-                f_next = next_is_not_terminal * (next_values - self.min_value) * (1 - next_collision_prob_policy.flatten())
-                f = (self.values[step].flatten() - self.min_value) * (1 - self.collision_prob_policy[step].flatten())
+                next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
+                f_next = next_is_not_terminal * (next_values - self.min_value) * (1 - next_collision_prob_policy)
+                f = (self.values[step] - self.min_value) * (1 - self.collision_prob_policy[step])
                 delta = (reward + gamma * f_next) - f
-                advantage = delta + next_is_not_terminal * gamma * lam * advantage # advantage = delta + gamma * lamda * advantage 이전 단계 advantage 를 더함
-                self.returns[step] = advantage + self.values[step].flatten()  # Q = V + A
             else : 
                 next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
                 # delta = self.qs[step] - self.values[step].flatten() # delta = r_t + gamma * V(s_{t+1}) - V(s_t)
                 delta = reward + next_is_not_terminal * gamma * next_values - self.values[step]
-                advantage = delta + next_is_not_terminal * gamma * lam * advantage # advantage = delta + gamma * lamda * advantage 이전 단계 advantage 를 더함
-                self.returns[step] = advantage + self.values[step]  # Q = V + A
+                
+            advantage = delta + next_is_not_terminal * gamma * lam * advantage # advantage = delta + gamma * lamda * advantage 이전 단계 advantage 를 더함
+            # last_gae_lam = delta + next_is_not_terminal * gamma * lam * last_gae_lam
+            # advantage = last_gae_lam
+            self.returns[step] = advantage + self.values[step]  # Q = V + A
             
             
             
@@ -370,13 +372,12 @@ class CollisionRolloutStorage:
             # elif mode == "V2b":  # A = Q(x,a) * P(x,a) - V(x) * P(x)
             #     diff_col_now_next[step] = col_prob_pi[step] - col_prob_preds[step]
             # else:  # A = [r + y * (V(x') * P(x'))] - V(x) * P(x)
-            diff_col_now_next[step] = self.collision_prob_policy[step] - self.collision_prob_policy[step+1]
+            diff_col_now_next[step] = self.collision_prob_policy[step] - next_collision_prob_policy
 
         # Compute and normalize the advantages
-        if safe_multi:
-            self.advantages = self.returns - self.values.reshape(self.num_transitions_per_env, self.num_envs)            # advantage = returns - values
-        else :
-            self.advantages = self.returns - self.values
+        # advantage = returns - values
+
+        self.advantages = self.returns - self.values
         self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8) # advantage 정규화
         
     # def compute_returns(self, last_values, gamma, lam, safe_multi: bool = False, 
@@ -435,7 +436,7 @@ class CollisionRolloutStorage:
             for i in range(num_mini_batches):
                 start = i * mini_batch_size
                 end = (i + 1) * mini_batch_size
-                batch_idx = indices[start:end]
+                batch_idx = indices[start:end]  # 16384 x 1
 
                 obs_batch = observations[batch_idx]
                 critic_observations_batch = critic_observations[batch_idx]
@@ -463,42 +464,42 @@ class CollisionRolloutStorage:
         for step in reversed(range(self.num_transitions_per_env)):
             if step == self.num_transitions_per_env - 1:
                 # next_non_terminal = 1.0 - self.dones
-                next_col_prob = last_collision_prob_values.flatten()
+                next_col_prob = last_collision_prob_values
             else:
-                next_col_prob = self.collision_prob[step + 1].flatten()
+                next_col_prob = self.collision_prob[step + 1]
                 
-            next_is_not_terminal = 1.0 - self.dones[step].float().flatten() # done 이면 0, 아니면 1
+            next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
             # TD(Lambda) Safety Critic
             q_safety = self.collision_rewards[step] + gamma_col_net * next_col_prob * next_is_not_terminal
-            delta_safety = q_safety - self.collision_prob[step].flatten()
+            delta_safety = q_safety - self.collision_prob[step]
             last_safety_lam = delta_safety + gamma_col_net * gae_lammda * next_is_not_terminal * last_safety_lam
-            self.collision_prob_target[step] = last_safety_lam + self.collision_prob[step].flatten()
+            self.collision_prob_target[step] = last_safety_lam + self.collision_prob[step]
 
         return self.collision_prob_target
     
     def compute_critic_targets(self, last_values, gamma_col_net, gae_lammda, safe_multi=False):
-        returns = torch.zeros(self.num_transitions_per_env, self.num_envs, device=self.device)
-        qs = torch.zeros(self.num_transitions_per_env, self.num_envs, device=self.device)
+        returns = torch.zeros_like(self.values, device=self.device) # 16 x 4096 x 1
+        qs = torch.zeros_like(self.values, device=self.device)
         last_val_lam = 0
         for step in reversed(range(self.num_transitions_per_env)):
             if step == self.num_transitions_per_env - 1:
                 # next_non_terminal = 1.0 - dones
-                next_values = last_values.clone().flatten()
+                next_values = last_values.clone()
             else:
-                next_values = self.values[step + 1].flatten()
+                next_values = self.values[step + 1]
 
             if safe_multi:
-                reward = torch.clamp(self.rewards[step], min=self.min_reward, max=torch.tensor(torch.inf).cuda()).flatten()
+                reward = torch.clamp(self.rewards[step], min=self.min_reward, max=torch.tensor(torch.inf).cuda())
                 # reward = torch.clip(self.rewards[step], min=self.min_reward, max=torch.tensor(torch.inf))
             else:
-                reward = self.rewards[step].flatten()
+                reward = self.rewards[step]
 
-            next_is_not_terminal = 1.0 - self.dones[step].float().flatten() # done 이면 0, 아니면 1
+            next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
             # TD Lambda Critic
             qs[step] = reward + gamma_col_net * next_values * next_is_not_terminal   # rt + γV (st+1)
-            delta_val = qs[step] - self.values[step].flatten()                           # delta
+            delta_val = qs[step] - self.values[step]                          # delta
             last_val_lam = delta_val + gamma_col_net * gae_lammda * next_is_not_terminal * last_val_lam  # hat{A}_{t}
-            returns[step] = last_val_lam + self.values[step].flatten()                   # Q_sa = A_hat + V_s
+            returns[step] = last_val_lam + self.values[step]                  # Q_sa = A_hat + V_s
         return returns, qs
                         
     # for RNNs only

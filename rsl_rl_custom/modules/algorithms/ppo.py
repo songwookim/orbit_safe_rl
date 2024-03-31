@@ -81,7 +81,9 @@ class PPO:
         self.l_multiplier = l_multiplier_init
         self.n_lagrange_samples = n_lagrange_samples
         self.collision_reward = collision_reward
-        self.gamma_col_net = gamma_col_net=1.0
+        self.gamma_col_net = gamma_col_net
+        self.kl_early_stop =0  # for maximum allowed kl divergence tuning
+        self.lr_schedule_step = 4
 
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape): 
         # 현재 state로 부터 다음 state value를 최대화하는 action을 찾기 위해 다음 action을  eval
@@ -197,25 +199,44 @@ class PPO:
             sigma_batch = self.actor_critic.action_std
             entropy_batch = self.actor_critic.entropy
 
+            early_stop_flag = False
+            with torch.no_grad():
+                log_ratio = actions_log_prob_batch - old_actions_log_prob_batch
+                approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio)
+                # approx_kl_divs.append(approx_kl_div)
+                    
             # KL (learning rate 조정)
             if self.desired_kl is not None and self.schedule == "adaptive":
-                with torch.inference_mode():
-                    kl = torch.sum(
-                        torch.log(sigma_batch / old_sigma_batch + 1.0e-5)
-                        + (torch.square(old_sigma_batch) + torch.square(old_mu_batch - mu_batch))
-                        / (2.0 * torch.square(sigma_batch))
-                        - 0.5,
-                        axis=-1,
-                    ) # type: ignore
-                    kl_mean = torch.mean(kl)
+                if self.safe_largrange and False :
+                    if approx_kl_div > self.desired_kl:
+                        self.kl_early_stop += 1
+                        if self.kl_early_stop >= self.lr_schedule_step:
+                            if self.learning_rate > 1e-5:
+                                self.learning_rate *= 0.5
+                                for param_group in self.optimizer.param_groups: # update learning_rate
+                                    param_group["lr"] = self.learning_rate
+                                self.kl_early_stop = 0
+                        early_stop_flag = True
+                        print(f"Early stopping at step __ due to reaching max kl: {approx_kl_div:.2f}")
 
-                    if kl_mean > self.desired_kl * 2.0:
-                        self.learning_rate = max(1e-5, self.learning_rate / 1.5)
-                    elif kl_mean < self.desired_kl / 2.0 and kl_mean > 0.0:
-                        self.learning_rate = min(1e-2, self.learning_rate * 1.5)
+                else :
+                    with torch.inference_mode():
+                        kl = torch.sum(
+                            torch.log(sigma_batch / old_sigma_batch + 1.0e-5)
+                            + (torch.square(old_sigma_batch) + torch.square(old_mu_batch - mu_batch))
+                            / (2.0 * torch.square(sigma_batch))
+                            - 0.5,
+                            axis=-1,
+                        ) # type: ignore
+                        kl_mean = torch.mean(kl)
 
-                    for param_group in self.optimizer.param_groups:
-                        param_group["lr"] = self.learning_rate
+                        if kl_mean > self.desired_kl * 2.0:
+                            self.learning_rate = max(1e-5, self.learning_rate / 1.5)
+                        elif kl_mean < self.desired_kl / 2.0 and kl_mean > 0.0:
+                            self.learning_rate = min(1e-2, self.learning_rate * 1.5)
+
+                        for param_group in self.optimizer.param_groups:
+                            param_group["lr"] = self.learning_rate
 
             # Surrogate loss
             ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch)) # actions_log_prob_batch = log_prob //  torch.squeeze(old_actions_log_prob_batch) = rollout_data.old_log_prob
@@ -224,15 +245,18 @@ class PPO:
             surrogate_loss = torch.max(surrogate, surrogate_clipped).mean() # policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
             
             # Value function loss
-            if self.use_clipped_value_loss:
-                value_clipped = target_values_batch + (value_batch - target_values_batch).clamp(
-                    -self.clip_param, self.clip_param
-                )
-                value_losses = (value_batch - returns_batch).pow(2)
-                value_losses_clipped = (value_clipped - returns_batch).pow(2)
-                value_loss = torch.max(value_losses, value_losses_clipped).mean()
-            else:
-                value_loss = (returns_batch - value_batch).pow(2).mean()
+            value_loss = (returns_batch - value_batch).pow(2).mean()
+            # if self.use_clipped_value_loss:
+            #     value_clipped = target_values_batch + (value_batch - target_values_batch).clamp(
+            #         -self.clip_param, self.clip_param
+            #     )
+            #     value_losses = (value_batch - returns_batch).pow(2)
+            #     value_losses_clipped = (value_clipped - returns_batch).pow(2)
+            #     value_loss = torch.max(value_losses, value_losses_clipped).mean()
+            # else:
+            #     value_loss = (returns_batch - value_batch).pow(2).mean()
+                # raise Exception("Not implemented")
+                
 
             # Collision loss
             col_loss = torch.tensor(0.0, device=self.device)
@@ -247,13 +271,18 @@ class PPO:
                 # else :
                 #     c, a = self.forward_sample_col_prob(rollout_data.observations, self.n_lagrange_samples, "mean")
 
-                col_loss_log = self.l_multiplier * (c - 0.1) # Tensor
+                col_loss_log = self.l_multiplier * (c - 0.1) # Tensor         0.1: c_max
                 col_loss = col_loss_log.mean()
                 # lagrange_penalty_mean.append(col_loss.item())
                 # lagrange_penalty_var.append(col_loss_log.var().item())
             # loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
             # if self.safe_largrange:
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean() + col_loss
+            
+            mean_value_loss += value_loss.item()
+            mean_surrogate_loss += surrogate_loss.item()
+            
+            # print("SL:", surrogate_loss.item(), "VL:", (self.value_loss_coef * value_loss).item(), "EL:", (self.entropy_coef * entropy_batch.mean()).item(), "CL:", col_loss.item(), "TOTAL:", loss.item())
             # else :
             #     loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
             # loss = policy_loss    + ent_coef * entropy_loss           + self.vf_coef * value_loss + col_loss 
@@ -265,23 +294,21 @@ class PPO:
             
             # ==== safe_rl ====
             # 라그랑주 상수 업데이트하지만, 0으로 되지는 않도록 하기
+            
             if self.safe_largrange:
                 # self.l_multiplier = max(0.05, self.l_multiplier + 1e-3 * (c.mean().item() - 0.1))
                 self.l_multiplier = max(0.05, self.l_multiplier + 1e-4 * (c.mean().item() - 0.1))
+            
             self.optimizer.zero_grad()
             loss.backward()
             # nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm) 
             nn.utils.clip_grad_norm_(self.parameters_to_optimize, self.max_grad_norm) 
             self.optimizer.step()
 
-            mean_value_loss += value_loss.item()
-            mean_surrogate_loss += surrogate_loss.item()
-            
             # ==== safe_rl ====
             mean_coll_loss += col_loss.item()
             
             # optimize collision network
-            # col_prob_targets_batch = torch.zeros_like(critic_obs_batch[:,0]) #################################
             current_col_prob = self.actor_critic.forward_safety_critic(obs_batch, actions_batch)
             target = col_prob_targets_batch.view(-1, 1) # 텐서 크기 (?,1) 로 변환
             col_net_loss = 0.5 * sum([weighted_bce(pred, target) for pred in current_col_prob])
@@ -289,6 +316,9 @@ class PPO:
             self.actor_critic.safety_critic_optimizer.zero_grad()
             col_net_loss.backward()
             self.actor_critic.safety_critic_optimizer.step()
+            
+            if early_stop_flag:
+                break
 
         num_updates = self.num_learning_epochs * self.num_mini_batches
         mean_value_loss /= num_updates

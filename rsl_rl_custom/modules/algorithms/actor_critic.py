@@ -80,7 +80,7 @@ class ActorCritic(nn.Module):
         # self.safety_critic_optimizer = optim.Adam(self.safety_critic.parameters(), lr=0.003)
         
         class SafetyCritic(nn.Module):
-            def __init__(self, input_size = 5, hidden_size = 256, output_size = 1):
+            def __init__(self, input_size = 5, hidden_size = 128, output_size = 1):
                 super(SafetyCritic, self).__init__()
                 self.qf0 = nn.Sequential(
                     nn.Linear(input_size, hidden_size),
@@ -114,7 +114,7 @@ class ActorCritic(nn.Module):
                 return out
             
         self.safety_critic = SafetyCritic(num_actor_obs + num_actions, safety_critic_hidden_dims[0], 1)
-        self.safety_critic_optimizer = optim.Adam(self.safety_critic.parameters(), lr=0.003)
+        self.safety_critic_optimizer = optim.Adam(self.safety_critic.parameters(), lr=0.001)
 
         print(f"Actor MLP: {self.actor}")
         print(f"Critic MLP: {self.critic}")
@@ -178,13 +178,13 @@ class ActorCritic(nn.Module):
         return value
 
     # ==== Safety Critic ====    
-    def forward_safety_critic(self, actor_observations, actions) -> tuple[torch.Tensor, torch.Tensor]:
-        qvalue_input = torch.cat([actor_observations, actions], dim=-1)
+    def forward_safety_critic(self, observations, actions) -> tuple[torch.Tensor, torch.Tensor]:
+        qvalue_input = torch.cat([observations, actions], dim=-1)
         return self.safety_critic(qvalue_input)
         # return tuple(safe_net(qvalue_input) for safe_net in self.safety_critic_layers)
         
-    def compute_safety_critic(self, actor_observations, actions, minimum=False) -> torch.Tensor:
-        qvalue_input = torch.cat([actor_observations, actions], dim=-1)
+    def compute_safety_critic(self, observations, actions, minimum=False) -> torch.Tensor:
+        qvalue_input = torch.cat([observations, actions], dim=-1)
         with torch.no_grad():
             out = self.safety_critic(qvalue_input)
         out = torch.cat(out, dim=1)

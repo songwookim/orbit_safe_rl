@@ -30,10 +30,19 @@ class RslRlPpoActorCriticCfg:
     activation: str = MISSING
     """The activation function for the actor and critic networks."""
     
+
+@configclass
+class RslRlPpoSafetyCriticCfg:
+    """Configuration for the PPO actor-critic networks."""
+
+    class_name: str = "SafetyCritic"
+    """The policy class name. Default is ActorCritic."""
+    
+    activation: str = MISSING
+    """The activation function for the actor and critic networks."""
     # ==== Safety ====
     n_critics: int = MISSING,
     safety_critic_hidden_dims: list = MISSING,
-
 
 @configclass
 class RslRlPpoAlgorithmCfg:

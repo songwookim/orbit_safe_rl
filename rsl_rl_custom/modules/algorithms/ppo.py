@@ -9,17 +9,19 @@ import torch.optim as optim
 
 import os 
 import sys
-from rsl_rl_custom.modules.algorithms.actor_critic import ActorCritic
+from rsl_rl_custom.modules.algorithms.actor_critic import ActorCritic, SafetyCritic
 # from rsl_rl.storage import RolloutStorage
 from rsl_rl_custom.modules.storage import RolloutStorage, CollisionRolloutStorage
 from torch.nn.functional import binary_cross_entropy
 
 class PPO:
     actor_critic: ActorCritic
+    safety_critic: SafetyCritic
     
     def __init__(
         self,
         actor_critic,
+        safety_critic,
         num_learning_epochs=1,
         num_mini_batches=1,
         clip_param=0.2,
@@ -53,15 +55,13 @@ class PPO:
         self.actor_critic = actor_critic 
         self.actor_critic.to(self.device)
         self.storage = None  # initialized later
+        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
         
         # ==== safety term ====
-        # safety_critic 부분을 제외한 파라미터 선택
-        self.parameters_to_optimize = []
-        for name, param in self.actor_critic.named_parameters():
-            if 'safety_critic' not in name:
-                self.parameters_to_optimize.append(param)
-        # self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
-        self.optimizer = optim.Adam(self.parameters_to_optimize, lr=learning_rate)
+        self.safety_critic = safety_critic
+        self.safety_critic.to(self.device)
+        self.optimizer_safety = optim.Adam(self.safety_critic.parameters(), lr=learning_rate)
+        
         self.transition = CollisionRolloutStorage.Transition()
         
         # PPO parameters
@@ -155,7 +155,7 @@ class PPO:
         
         # ==== Safety Term ====
         # with torch.no_grad():
-        last_collision_prob_values = self.actor_critic.compute_safety_critic(last_critic_obs, last_actions).detach()
+        last_collision_prob_values = self.safety_critic.compute_safety_critic(last_critic_obs, last_actions).detach()
         self.storage.compute_returns(last_values, 
                                      self.gamma, 
                                      self.lam, 
@@ -265,8 +265,7 @@ class PPO:
             if self.safe_largrange:
                 if self.n_lagrange_samples == 1:
                     action_sample = self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0]) # a, _, _ = self.alg.forward(obs_batch)
-                    # c = torch.cat(self.actor_critic.forward_safety_critic(obs_batch, actions_batch), dim=1) # num env*mini_batch_size x critic 갯수
-                    c = torch.cat(self.actor_critic.forward_safety_critic(obs_batch, action_sample), dim=1) # num env*mini_batch_size x critic 갯수
+                    c = torch.cat(self.safety_critic.forward_safety_critic(obs_batch, action_sample), dim=1) # num env*mini_batch_size x critic 갯수
                     c, _ = torch.max(c, dim=1, keepdim=True)
                 # else :
                 #     c, a = self.forward_sample_col_prob(rollout_data.observations, self.n_lagrange_samples, "mean")
@@ -301,21 +300,20 @@ class PPO:
             
             self.optimizer.zero_grad()
             loss.backward()
-            # nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm) 
-            nn.utils.clip_grad_norm_(self.parameters_to_optimize, self.max_grad_norm) 
+            nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm) 
             self.optimizer.step()
 
+
             # ==== safe_rl ====
-            mean_coll_loss += col_loss.item()
-            
+            mean_coll_loss += col_loss.item()            
             # optimize collision network
-            current_col_prob = self.actor_critic.forward_safety_critic(obs_batch, actions_batch)
+            current_col_prob = self.safety_critic.forward_safety_critic(obs_batch, actions_batch)
             target = col_prob_targets_batch.view(-1, 1) # 텐서 크기 (?,1) 로 변환
             col_net_loss = 0.5 * sum([weighted_bce(pred, target) for pred in current_col_prob])
             # col_net_losses.append(col_net_loss.item())
-            self.actor_critic.safety_critic_optimizer.zero_grad()
+            self.optimizer_safety.zero_grad()
             col_net_loss.backward()
-            self.actor_critic.safety_critic_optimizer.step()
+            self.optimizer_safety.step()
             
             if early_stop_flag:
                 break

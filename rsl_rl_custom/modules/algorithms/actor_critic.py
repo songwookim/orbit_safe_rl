@@ -21,10 +21,6 @@ class ActorCritic(nn.Module):
         critic_hidden_dims=[256, 256, 256],
         activation="elu",
         init_noise_std=1.0,
-        
-        # # ==== Safety ====
-        n_critics: int = 2,
-        safety_critic_hidden_dims: list = [256, 256, 256],
         **kwargs,
     ):
         if kwargs:
@@ -79,46 +75,14 @@ class ActorCritic(nn.Module):
         #     self.safety_critics.append(safety_critic)
         # self.safety_critic_optimizer = optim.Adam(self.safety_critic.parameters(), lr=0.003)
         
-        class SafetyCritic(nn.Module):
-            def __init__(self, input_size = 5, hidden_size = 128, output_size = 1):
-                super(SafetyCritic, self).__init__()
-                self.qf0 = nn.Sequential(
-                    nn.Linear(input_size, hidden_size),
-                    nn.ReLU(),
-                    nn.Linear(hidden_size, hidden_size),
-                    nn.ReLU(),
-                    nn.Linear(hidden_size, output_size),
-                    nn.Sigmoid()
-                )
-                self.qf1 = nn.Sequential(
-                    nn.Linear(input_size, hidden_size),
-                    nn.ReLU(),
-                    nn.Linear(hidden_size, hidden_size),
-                    nn.ReLU(),
-                    nn.Linear(hidden_size, output_size),
-                    nn.Sigmoid()
-                )
-                self.q_networks = [self.qf0, self.qf1]
-            
-            def forward(self, qvalue_input):
-                qf0_output = self.qf0(qvalue_input)
-                qf1_output = self.qf1(qvalue_input)
-                return qf0_output, qf1_output
 
-            def compute(self, model, obs, actions, minimum=False):
-                qvalue_input = torch.cat([obs, actions], dim=-1)
-                with torch.no_grad():
-                    out = model(qvalue_input)
-                out = torch.cat(out, dim=1)
-                out, _ = torch.min(out, dim=1, keepdim=True) if minimum else torch.max(out, dim=1, keepdim=True)
-                return out
             
-        self.safety_critic = SafetyCritic(num_actor_obs + num_actions, safety_critic_hidden_dims[0], 1)
-        self.safety_critic_optimizer = optim.Adam(self.safety_critic.parameters(), lr=0.001)
+        # self.safety_critic = SafetyCritic(num_actor_obs + num_actions, safety_critic_hidden_dims[0], 1)
+        # self.safety_critic_optimizer = optim.Adam(self.safety_critic.parameters(), lr=0.001)
 
         print(f"Actor MLP: {self.actor}")
         print(f"Critic MLP: {self.critic}")
-        print(f"Safety Critic MLP: {self.safety_critic}")
+
 
         # Action noise
         self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
@@ -177,20 +141,7 @@ class ActorCritic(nn.Module):
         value = self.critic(critic_observations)
         return value
 
-    # ==== Safety Critic ====    
-    def forward_safety_critic(self, observations, actions) -> tuple[torch.Tensor, torch.Tensor]:
-        qvalue_input = torch.cat([observations, actions], dim=-1)
-        return self.safety_critic(qvalue_input)
-        # return tuple(safe_net(qvalue_input) for safe_net in self.safety_critic_layers)
-        
-    def compute_safety_critic(self, observations, actions, minimum=False) -> torch.Tensor:
-        qvalue_input = torch.cat([observations, actions], dim=-1)
-        with torch.no_grad():
-            out = self.safety_critic(qvalue_input)
-        out = torch.cat(out, dim=1)
-        out, _ = torch.min(out, dim=1, keepdim=True) if minimum else torch.max(out, dim=1, keepdim=True)
-        return out
-    
+    # ==== Safety Critic ====        
     def get_action_samples(self, observations):
         mean = self.actor(observations)
         self.distribution = Normal(mean, mean * 0.0 + self.std)
@@ -207,7 +158,85 @@ class ActorCritic(nn.Module):
         latent_vector = self.output_values.copy()
         self.output_values = []
         return latent_vector[0]
+    
+class SafetyCritic(nn.Module):
+    def __init__(
+        self, 
+        num_obs, 
+        num_actions,
         
+        activation="relu",
+        n_critics: int = 2,
+        safety_critic_hidden_dims: list = [256, 256, 256],
+    ):
+        super(SafetyCritic, self).__init__()
+        
+        activation = get_activation(activation)
+        qvalue_input_dim = num_obs + num_actions
+        
+        self.safety_networks = []
+        for i in range(n_critics):
+            safety_layers = []
+            safety_layers.append(nn.Linear(qvalue_input_dim, safety_critic_hidden_dims[0]))
+            safety_layers.append(activation)
+            for layer_index in range(len(safety_critic_hidden_dims)):
+                if layer_index == len(safety_critic_hidden_dims) - 1:
+                    safety_layers.append(nn.Linear(safety_critic_hidden_dims[layer_index], 1))
+                else:
+                    safety_layers.append(nn.Linear(safety_critic_hidden_dims[layer_index], safety_critic_hidden_dims[layer_index + 1]))
+                    safety_layers.append(activation)
+            safety_layers.append(nn.Sigmoid())
+            
+            safety_network = nn.Sequential(*safety_layers)
+            self.safety_networks.append(safety_network)
+            
+        self.qf0 = self.safety_networks[0]
+        self.qf1 = self.safety_networks[1]
+        # self.qf0 = nn.Sequential(
+        #     nn.Linear(input_size, hidden_size),
+        #     nn.ReLU(),
+        #     nn.Linear(hidden_size, hidden_size),
+        #     nn.ReLU(),
+        #     nn.Linear(hidden_size, output_size),
+        #     nn.Sigmoid()
+        # )
+        # self.qf1 = nn.Sequential(
+        #     nn.Linear(input_size, hidden_size),
+        #     nn.ReLU(),
+        #     nn.Linear(hidden_size, hidden_size),
+        #     nn.ReLU(),
+        #     nn.Linear(hidden_size, output_size),
+        #     nn.Sigmoid()
+        # )
+        # self.q_networks = [self.qf0, self.qf1]
+        print(f"Safety Critic MLP: {self.safety_networks}")
+    
+    def forward(self, qvalue_input):
+        return tuple(safety_network(qvalue_input) for safety_network in self.safety_networks)
+        # qf0_output = self.qf0(qvalue_input)
+        # qf1_output = self.qf1(qvalue_input)
+        # return qf0_output, qf1_output
+
+    def compute(self, model, obs, actions, minimum=False):
+        qvalue_input = torch.cat([obs, actions], dim=-1)
+        with torch.no_grad():
+            out = model(qvalue_input)
+        out = torch.cat(out, dim=1)
+        out, _ = torch.min(out, dim=1, keepdim=True) if minimum else torch.max(out, dim=1, keepdim=True)
+        return out        
+    
+    def forward_safety_critic(self, observations, actions) -> tuple[torch.Tensor, torch.Tensor]:
+        qvalue_input = torch.cat([observations, actions], dim=-1)
+        return self.forward(qvalue_input)
+        # return tuple(safe_net(qvalue_input) for safe_net in self.safety_critic_layers)
+        
+    def compute_safety_critic(self, observations, actions, minimum=False) -> torch.Tensor:
+        qvalue_input = torch.cat([observations, actions], dim=-1)
+        with torch.no_grad():
+            out = self.forward(qvalue_input)
+        out = torch.cat(out, dim=1)
+        out, _ = torch.min(out, dim=1, keepdim=True) if minimum else torch.max(out, dim=1, keepdim=True)
+        return out
 
 def get_activation(act_name):
     if act_name == "elu":

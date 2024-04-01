@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from omni.isaac.orbit.utils import configclass
-from rsl_rl_custom.modules.runners.rsl_rl_cfgs import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from rsl_rl_custom.modules.runners.rsl_rl_cfgs import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlPpoSafetyCriticCfg
 
 # from omni.isaac.orbit_tasks.utils.wrappers.rsl_rl import (
 #     RslRlOnPolicyRunnerCfg,
@@ -28,6 +28,12 @@ class CartpolePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         actor_hidden_dims=[32, 32],
         critic_hidden_dims=[32, 32],
         activation="elu",
+        
+    )
+    # ==== Safety ====
+    safety_critic = RslRlPpoSafetyCriticCfg(
+        
+        activation="relu",
         
         # ==== Safety ====
         n_critics = 2, # 2

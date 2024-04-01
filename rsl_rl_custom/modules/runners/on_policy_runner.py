@@ -15,7 +15,7 @@ from rsl_rl.env import VecEnv
 from rsl_rl.modules import ActorCriticRecurrent, EmpiricalNormalization # ActorCritic
 from rsl_rl.utils import store_code_state
 
-from rsl_rl_custom.modules.algorithms import PPO, ActorCritic
+from rsl_rl_custom.modules.algorithms import PPO, ActorCritic, SafetyCritic
 # from rsl_rl.algorithms import PPO
 # from rsl_rl_custom.modules.algorithms.ppo import PPO
 from typing import Union
@@ -26,7 +26,8 @@ class OnPolicyRunner:
     def __init__(self, env: VecEnv, train_cfg, log_dir=None, device="cpu"):
         self.cfg = train_cfg
         self.alg_cfg = train_cfg["algorithm"] # 알고리즘 관련 cfg
-        self.policy_cfg = train_cfg["policy"] # 정책 관련 cfg
+        self.policy_cfg = train_cfg["policy"] # 정책/가치 관련 cfg
+        self.safety_cfg = train_cfg["safety_critic"] # Safety Critic 관련 cfg
         self.device = device
         self.env = env
         obs, extras = self.env.get_observations()
@@ -39,8 +40,14 @@ class OnPolicyRunner:
         actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class(  # ActorCritic 인스턴스 생성 (obs, critic_obs, action_space, **policy_cfg=정책관련 cfg)
             num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
         ).to(self.device)
+        # ==== Safety Term ====
+        safety_critic_class = eval(self.safety_cfg.pop("class_name"))
+        safety_critic: SafetyCritic = safety_critic_class(  # ActorCritic 인스턴스 생성 (obs, critic_obs, action_space, **policy_cfg=정책관련 cfg)
+            num_obs, self.env.num_actions, **self.safety_cfg
+        ).to(self.device)
+        
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO 생성자 [알고리즘 클래스]
-        self.alg: PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg) # PPO 인스턴스 생성 (policy, **alg_cfg=알고리즘관련 cfg)
+        self.alg: PPO = alg_class(actor_critic, safety_critic, device=self.device, **self.alg_cfg) # PPO 인스턴스 생성 (policy, **alg_cfg=알고리즘관련 cfg)
         self.num_steps_per_env = self.cfg["num_steps_per_env"]  # env마다 수행할 step 수
         self.save_interval = self.cfg["save_interval"]          # 저장 간격
         self.empirical_normalization = self.cfg["empirical_normalization"] # Emprical 정규화 여부.. 
@@ -116,7 +123,7 @@ class OnPolicyRunner:
             with torch.inference_mode():
                 for i in range(self.num_steps_per_env):    # num_env를 num_steps_per_env만큼 수행
                     actions = self.alg.act(obs, critic_obs) # [action : num_env x 1]     PPO에서의 action 샘플링 [self.alg.transition.{action,value} 만 업데이트]
-                    collision_prob = self.alg.actor_critic.compute_safety_critic(critic_obs, actions, minimum=False) # safety # self.alg.actor_critic.compute_safety_critic(torch.zeros_like(critic_obs), torch.zeros_like(actions)-1)
+                    collision_prob = self.alg.safety_critic.compute_safety_critic(critic_obs, actions, minimum=False) # safety # self.alg.actor_critic.compute_safety_critic(torch.zeros_like(critic_obs), torch.zeros_like(actions)-1)
                     obs, rewards, dones, infos = self.env.step(actions)
                     obs = self.obs_normalizer(obs)  # obs 정규화
                     if "critic" in infos["observations"]:
@@ -374,11 +381,11 @@ class OnPolicyRunner:
         predictions = None
         
         qvalue_input = torch.cat([col_state_samples, actions], dim=-1)
-        out = self.alg.actor_critic.compute_safety_critic(col_state_samples, actions)
+        out = self.alg.safety_critic.compute_safety_critic(col_state_samples, actions)
         
         # out = out.reshape((n_samples, original_batch_size, *tuple(out.shape[1:])))
         # predictions = out if predictions is None else torch.cat((predictions, out), dim=0)
-        for collsion_net in self.alg.actor_critic.safety_critic.q_networks:
+        for collsion_net in self.alg.safety_critic.safety_networks:
             out = collsion_net(qvalue_input)
             # From [batch_size * n_passes, ...] to [n_passes, batch_size, ...]
             out = out.reshape((n_samples, original_batch_size, *tuple(out.shape[1:])))

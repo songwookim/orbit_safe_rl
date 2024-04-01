@@ -30,6 +30,40 @@ class RslRlPpoActorCriticCfg:
     activation: str = MISSING
     """The activation function for the actor and critic networks."""
     
+    
+@configclass
+class RslRlPpoActorCfg:
+    """Configuration for the PPO actor-critic networks."""
+
+    class_name: str = "Actor"
+    """The policy class name. Default is ActorCritic."""
+
+    init_noise_std: float = MISSING
+    """The initial noise standard deviation for the policy."""
+
+    actor_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the actor network."""
+
+    activation: str = MISSING
+    """The activation function for the actor and critic networks."""
+    
+    
+@configclass
+class RslRlPpoCriticCfg:
+    """Configuration for the PPO actor-critic networks."""
+
+    class_name: str = "Critic"
+    """The policy class name. Default is ActorCritic."""
+
+    init_noise_std: float = MISSING
+    """The initial noise standard deviation for the policy."""
+
+    critic_hidden_dims: list[int] = MISSING
+    """The hidden dimensions of the critic network."""
+
+    activation: str = MISSING
+    """The activation function for the actor and critic networks."""
+    
 
 @configclass
 class RslRlPpoSafetyCriticCfg:
@@ -37,12 +71,12 @@ class RslRlPpoSafetyCriticCfg:
 
     class_name: str = "SafetyCritic"
     """The policy class name. Default is ActorCritic."""
-    
+    safety_critic_hidden_dims: list = MISSING,
     activation: str = MISSING
     """The activation function for the actor and critic networks."""
     # ==== Safety ====
     n_critics: int = MISSING,
-    safety_critic_hidden_dims: list = MISSING,
+
 
 @configclass
 class RslRlPpoAlgorithmCfg:
@@ -117,8 +151,14 @@ class RslRlOnPolicyRunnerCfg:
     empirical_normalization: bool = MISSING
     """Whether to use empirical normalization."""
 
-    policy: RslRlPpoActorCriticCfg = MISSING
+    policy: RslRlPpoActorCfg = MISSING
     """The policy configuration."""
+    
+    value: RslRlPpoCriticCfg = MISSING
+    """The policy configuration."""
+    
+    safety_critic: RslRlPpoSafetyCriticCfg = MISSING
+    """The safety critic configuration."""
 
     algorithm: RslRlPpoAlgorithmCfg = MISSING
     """The algorithm configuration."""

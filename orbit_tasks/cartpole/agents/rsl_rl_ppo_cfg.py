@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from omni.isaac.orbit.utils import configclass
-from rsl_rl_custom.modules.runners.rsl_rl_cfgs import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg, RslRlPpoSafetyCriticCfg
+from rsl_rl_custom.modules.runners.rsl_rl_cfgs import RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlPpoSafetyCriticCfg, RslRlPpoActorCfg, RslRlPpoCriticCfg
 
 # from omni.isaac.orbit_tasks.utils.wrappers.rsl_rl import (
 #     RslRlOnPolicyRunnerCfg,
@@ -23,21 +23,22 @@ class CartpolePPORunnerCfg(RslRlOnPolicyRunnerCfg):
     # ==== Safety ====
     n_col_value_samples = 20
     
-    policy = RslRlPpoActorCriticCfg(
+    
+    policy = RslRlPpoActorCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[32, 32],
+        activation="elu",
+    )    
+    value = RslRlPpoCriticCfg(
+        init_noise_std=1.0,
         critic_hidden_dims=[32, 32],
         activation="elu",
-        
     )
     # ==== Safety ====
     safety_critic = RslRlPpoSafetyCriticCfg(
-        
         activation="relu",
-        
-        # ==== Safety ====
-        n_critics = 2, # 2
         safety_critic_hidden_dims=[32, 32],
+        n_critics = 2, # 2        
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,

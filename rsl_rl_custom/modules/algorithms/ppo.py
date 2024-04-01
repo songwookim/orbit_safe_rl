@@ -9,18 +9,22 @@ import torch.optim as optim
 
 import os 
 import sys
-from rsl_rl_custom.modules.algorithms.actor_critic import ActorCritic, SafetyCritic
+from rsl_rl_custom.modules.algorithms.actor_critic import ActorCritic, SafetyCritic, Actor, Critic
 # from rsl_rl.storage import RolloutStorage
 from rsl_rl_custom.modules.storage import RolloutStorage, CollisionRolloutStorage
 from torch.nn.functional import binary_cross_entropy
 
 class PPO:
-    actor_critic: ActorCritic
+    # actor_critic: ActorCritic
+    actor: Actor
+    critic: Critic
     safety_critic: SafetyCritic
     
     def __init__(
         self,
-        actor_critic,
+        # actor_critic,
+        actor,
+        critic,
         safety_critic,
         num_learning_epochs=1,
         num_mini_batches=1,
@@ -52,10 +56,13 @@ class PPO:
         self.learning_rate = learning_rate
 
         # PPO components
-        self.actor_critic = actor_critic 
-        self.actor_critic.to(self.device)
+        # self.actor_critic = actor_critic 
+        # self.actor_critic.to(self.device)
+        self.actor = actor
+        self.critic = critic
         self.storage = None  # initialized later
-        self.optimizer = optim.Adam(self.actor_critic.parameters(), lr=learning_rate)
+        self.optimizer_actor = optim.Adam(self.actor.parameters(), lr=learning_rate)
+        self.optimizer_critic = optim.Adam(self.critic.parameters(), lr=learning_rate)
         
         # ==== safety term ====
         self.safety_critic = safety_critic
@@ -103,33 +110,17 @@ class PPO:
         self.actor_critic.train()
 
     def act(self, obs, critic_obs):
-        if self.actor_critic.is_recurrent:  # critic 모델이 RNN인 경우
-            self.transition.hidden_states = self.actor_critic.get_hidden_states()
             
         # Compute the actions and values 
-        self.transition.actions = self.actor_critic.act(obs).detach() #  actor : action에 대해 샘플링 진행, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
-        self.transition.values = self.actor_critic.evaluate(critic_obs).detach()  # critic : action에 대해 value를 계산, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
-        self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()  # action 분포에 대한 log_prob 계산, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
-        self.transition.action_mean = self.actor_critic.action_mean.detach()     # action 분포의 평균값 계산, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
-        self.transition.action_sigma = self.actor_critic.action_std.detach()     # action 분포의 표준편차 계산, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
+        self.transition.actions = self.actor.act(obs).detach() #  actor : action에 대해 샘플링 진행, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
+        self.transition.values = self.critic.evaluate(critic_obs).detach()  # critic : action에 대해 value를 계산, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
+        self.transition.actions_log_prob = self.actor.get_actions_log_prob(self.transition.actions).detach()  # action 분포에 대한 log_prob 계산, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
+        self.transition.action_mean = self.actor.action_mean.detach()     # action 분포의 평균값 계산, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
+        self.transition.action_sigma = self.actor.action_std.detach()     # action 분포의 표준편차 계산, 이후 값을 detach하여 그래프 연산을 분리합니다. (상수취급)
         # need to record obs and critic_obs before env.step()
         self.transition.observations = obs  # transition에 현재 state(obs) 저장
         self.transition.critic_observations = critic_obs # transition에 현재 state(critic_obs) 저장
         return self.transition.actions
-
-    # def process_env_step(self, rewards, dones, infos):   # >>>  # process_env_step_with_safety 으로 대체
-    #     self.transition.rewards = rewards.clone()
-    #     self.transition.dones = dones
-    #     # Bootstrapping on time outs
-    #     if "time_outs" in infos: # time_outs가 infos에 있을 경우 
-    #         self.transition.rewards += self.gamma * torch.squeeze(
-    #             self.transition.values * infos["time_outs"].unsqueeze(1).to(self.device), 1
-    #         )
-
-    #     # Record the transition
-    #     self.storage.add_transitions(self.transition) # transition 저장 후, 리셋
-    #     self.transition.clear()
-    #     # self.actor_critic.reset(dones) # 완료된 episode에 대해 actor_critic을 리셋,, 그냥 pass 되어 있어서 주석처리
         
     # 원래 있거에서 추가 대체, collision(safety term) 관련 추가하기
     def process_env_step_with_safety(self, rewards, dones, infos, 
@@ -151,7 +142,7 @@ class PPO:
         self.transition.clear()
         
     def compute_returns(self, last_critic_obs, last_actions, last_colllision_prob_policy):
-        last_values = self.actor_critic.evaluate(last_critic_obs).detach()
+        last_values = self.critic.evaluate(last_critic_obs).detach()
         
         # ==== Safety Term ====
         # with torch.no_grad():
@@ -169,10 +160,16 @@ class PPO:
         mean_value_loss = 0
         mean_surrogate_loss = 0
         mean_coll_loss = 0 # ==== safe_rl ====
-        if self.actor_critic.is_recurrent:
-            generator = self.storage.reccurent_mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
-        else:
-            generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs) # 배치크기 = env 갯수 * env마다 수행한 step 수 / mini_batch_size =  배치 크기에서 num_mini_batches 나눈 값 => # num_learning_epochs 만큼 반복
+        
+        # generator_actor = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs) 
+        # optimize_actor(self)
+        
+        # generator_critic = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs * 2) 
+        # optimize_critic(self)
+        
+        generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs) 
+        # optimize_actor(self)
+        
         for ( # type: ignore
             obs_batch,
             critic_obs_batch,
@@ -190,14 +187,15 @@ class PPO:
             col_prob_targets_batch,
             
         ) in generator:
-            self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
-            actions_log_prob_batch = self.actor_critic.get_actions_log_prob(actions_batch)
-            value_batch = self.actor_critic.evaluate(
+
+            self.actor.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
+            actions_log_prob_batch = self.actor.get_actions_log_prob(actions_batch)
+            value_batch = self.critic.evaluate(
                 critic_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1]
             )
-            mu_batch = self.actor_critic.action_mean
-            sigma_batch = self.actor_critic.action_std
-            entropy_batch = self.actor_critic.entropy
+            mu_batch = self.actor.action_mean
+            sigma_batch = self.actor.action_std
+            entropy_batch = self.actor.entropy  # ##########################################
 
             early_stop_flag = False
             with torch.no_grad():
@@ -235,8 +233,10 @@ class PPO:
                         elif kl_mean < self.desired_kl / 2.0 and kl_mean > 0.0:
                             self.learning_rate = min(1e-2, self.learning_rate * 1.5)
 
-                        for param_group in self.optimizer.param_groups:
-                            param_group["lr"] = self.learning_rate
+                        optimizer_param_groups = [self.optimizer_actor.param_groups, self.optimizer_critic.param_groups]
+                        for optimizer_param_group in optimizer_param_groups:
+                            for param_group in optimizer_param_group:
+                                param_group["lr"] = self.learning_rate
 
             # Surrogate loss
             ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch)) # actions_log_prob_batch = log_prob //  torch.squeeze(old_actions_log_prob_batch) = rollout_data.old_log_prob
@@ -264,14 +264,14 @@ class PPO:
             # Deciding how many samples to take to approximate Lagrange Expectation Gradient
             if self.safe_largrange:
                 if self.n_lagrange_samples == 1:
-                    action_sample = self.actor_critic.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0]) # a, _, _ = self.alg.forward(obs_batch)
+                    action_sample = self.actor.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0]) # a, _, _ = self.alg.forward(obs_batch)
                     c = torch.cat(self.safety_critic.forward_safety_critic(obs_batch, action_sample), dim=1) # num env*mini_batch_size x critic 갯수
                     c, _ = torch.max(c, dim=1, keepdim=True)
                 # else :
                 #     c, a = self.forward_sample_col_prob(rollout_data.observations, self.n_lagrange_samples, "mean")
 
                 col_loss_log = self.l_multiplier * (c - 0.1) # Tensor         0.1: c_max
-                col_loss = col_loss_log.mean()
+                col_loss = col_loss_log.mean() # type: ignore
                 # lagrange_penalty_mean.append(col_loss.item())
                 # lagrange_penalty_var.append(col_loss_log.var().item())
             # loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
@@ -298,11 +298,24 @@ class PPO:
                 # self.l_multiplier = max(0.05, self.l_multiplier + 1e-3 * (c.mean().item() - 0.1))
                 self.l_multiplier = max(0.05, self.l_multiplier + 1e-4 * (c.mean().item() - 0.1))
             
-            self.optimizer.zero_grad()
+            # self.optimizer.zero_grad()
+            # loss.backward()
+            # nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm) 
+            # self.optimizer.step()
+            
+            self.optimizer_actor.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm) 
-            self.optimizer.step()
-
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+            self.optimizer_actor.step()
+            
+            # Value function loss
+            returns_batch = returns_batch.requires_grad_()
+            target_values_batch = target_values_batch.requires_grad_()
+            value_loss = torch.Tensor(returns_batch - target_values_batch).pow(2).mean()
+            self.optimizer_critic.zero_grad()
+            value_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
+            self.optimizer_critic.step()           
 
             # ==== safe_rl ====
             mean_coll_loss += col_loss.item()            
@@ -327,7 +340,10 @@ class PPO:
         self.storage.clear()
 
         return mean_value_loss, mean_surrogate_loss, mean_coll_loss
-    
+    def optimize_actor(self) -> None :
+        pass
+    def optimize_critic(self) -> None :
+        pass
 def weighted_bce(pred: torch.Tensor,   # safety critic 계산값.. safety 확률 얻음
                  target: torch.Tensor, 
                  p_threshold=0.5) -> torch.Tensor :

@@ -180,7 +180,7 @@ class CollisionRolloutStorage:
         def __init__(self):
             self.observations = None
             self.critic_observations = None
-            self.actions = None
+            self.actions : torch.Tensor = None
             self.rewards = None
             self.dones = None
             self.values = None

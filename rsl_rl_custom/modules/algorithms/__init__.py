@@ -4,6 +4,6 @@
 """Implementation of runners for environment-agent interaction."""
 
 from .ppo import PPO
-from .actor_critic import ActorCritic, SafetyCritic
+from .actor_critic import ActorCritic, SafetyCritic, Actor, Critic
 
 # __all__ = ["OnPolicyRunner"]

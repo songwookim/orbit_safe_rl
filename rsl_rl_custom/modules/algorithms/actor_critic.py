@@ -80,9 +80,8 @@ class ActorCritic(nn.Module):
         # self.safety_critic = SafetyCritic(num_actor_obs + num_actions, safety_critic_hidden_dims[0], 1)
         # self.safety_critic_optimizer = optim.Adam(self.safety_critic.parameters(), lr=0.001)
 
-        print(f"Actor MLP: {self.actor}")
-        print(f"Critic MLP: {self.critic}")
 
+        print(f"Critic MLP: {self.critic}")
 
         # Action noise
         self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
@@ -141,7 +140,6 @@ class ActorCritic(nn.Module):
         value = self.critic(critic_observations)
         return value
 
-    # ==== Safety Critic ====        
     def get_action_samples(self, observations):
         mean = self.actor(observations)
         self.distribution = Normal(mean, mean * 0.0 + self.std)
@@ -159,6 +157,153 @@ class ActorCritic(nn.Module):
         self.output_values = []
         return latent_vector[0]
     
+# Policy Network
+class Actor(nn.Module):
+    def __init__(
+        self,
+        num_actor_obs,
+        num_critic_obs,
+        num_actions,
+        actor_hidden_dims=[256, 256, 256],
+        activation="elu",
+        init_noise_std=1.0,
+        **kwargs,
+    ):  
+        super().__init__()
+        activation = get_activation(activation)
+        num_of_state = num_actor_obs
+        # Policy
+        actor_layers = []
+        actor_layers.append(nn.Linear(num_of_state, actor_hidden_dims[0]))
+        actor_layers.append(activation)
+        for layer_index in range(len(actor_hidden_dims)):
+            if layer_index == len(actor_hidden_dims) - 1:
+                actor_layers.append(nn.Linear(actor_hidden_dims[layer_index], num_actions))
+            else:
+                actor_layers.append(nn.Linear(actor_hidden_dims[layer_index], actor_hidden_dims[layer_index + 1]))
+                actor_layers.append(activation)
+        self.actor = nn.Sequential(*actor_layers)
+        
+        print(f"Actor MLP: {self.actor}")
+        
+        # Action noise
+        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        self.distribution : Normal = None # type: ignore
+        # disable args validation for speedup
+        Normal.set_default_validate_args = False # type: ignore
+
+    @staticmethod
+    # not used at the moment
+    def init_weights(sequential, scales):
+        [
+            torch.nn.init.orthogonal_(module.weight, gain=scales[idx])
+            for idx, module in enumerate(mod for mod in sequential if isinstance(mod, nn.Linear))
+        ]
+
+    def reset(self, dones=None):
+        pass
+
+    def forward(self):
+        raise NotImplementedError
+
+    @property
+    def action_mean(self):
+        return self.distribution.mean 
+
+    @property
+    def action_std(self):
+        return self.distribution.stddev
+
+    @property
+    def entropy(self):
+        return self.distribution.entropy().sum(dim=-1)        
+    
+    def update_distribution(self, observations):
+        mean = self.actor(observations)        # actor 신경망 -> 확률분포얻음 (observed state -> mean of action distribution) 
+        self.distribution = Normal(mean, mean * 0.0 + self.std)
+
+    def act(self, observations, **kwargs) -> torch.Tensor:
+        self.update_distribution(observations) # observation한 state에 따라 확률 분포 업데이트
+        return self.distribution.sample()
+
+    def get_actions_log_prob(self, actions):
+        return self.distribution.log_prob(actions).sum(dim=-1)
+
+    def act_inference(self, observations):
+        actions_mean = self.actor(observations) # 
+        return actions_mean
+    
+    def get_action_samples(self, observations):
+        mean = self.actor(observations)
+        self.distribution = Normal(mean, mean * 0.0 + self.std)
+        return self.distribution.sample()
+        
+# Value Network
+class Critic(nn.Module):
+    def __init__(
+        self,
+        num_actor_obs,
+        num_critic_obs,
+        num_actions,
+        critic_hidden_dims=[256, 256, 256],
+        activation="elu",
+        init_noise_std=1.0,
+        **kwargs,
+    ):  
+        super().__init__()
+        activation = get_activation(activation)
+        num_of_state = num_critic_obs
+        # Policy
+        critic_layers = []
+        critic_layers.append(nn.Linear(num_of_state, critic_hidden_dims[0]))
+        critic_layers.append(activation)
+        for layer_index in range(len(critic_hidden_dims)):
+            if layer_index == len(critic_hidden_dims) - 1:
+                critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], num_actions))
+            else:
+                critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], critic_hidden_dims[layer_index + 1]))
+                critic_layers.append(activation)
+        self.critic = nn.Sequential(*critic_layers)
+        
+        print(f"Critic MLP: {self.critic}")
+        
+        # Action noise
+        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
+        self.distribution : Normal = None # type: ignore
+        
+        # disable args validation for speedup
+        Normal.set_default_validate_args = False # type: ignore
+        
+    @staticmethod
+    # not used at the moment
+    def init_weights(sequential, scales):
+        [
+            torch.nn.init.orthogonal_(module.weight, gain=scales[idx])
+            for idx, module in enumerate(mod for mod in sequential if isinstance(mod, nn.Linear))
+        ]
+
+    def reset(self, dones=None):
+        pass
+
+    def forward(self):
+        raise NotImplementedError
+
+    @property
+    def action_mean(self):
+        return self.distribution.mean
+
+    @property
+    def action_std(self):
+        return self.distribution.stddev
+
+    @property
+    def entropy(self):
+        return self.distribution.entropy().sum(dim=-1)
+            
+    def evaluate(self, critic_observations, **kwargs):
+        value = self.critic(critic_observations)
+        return value
+        
 class SafetyCritic(nn.Module):
     def __init__(
         self, 

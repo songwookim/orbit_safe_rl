@@ -15,7 +15,7 @@ from rsl_rl.env import VecEnv
 from rsl_rl.modules import ActorCriticRecurrent, EmpiricalNormalization # ActorCritic
 from rsl_rl.utils import store_code_state
 
-from rsl_rl_custom.modules.algorithms import PPO, ActorCritic, SafetyCritic
+from rsl_rl_custom.modules.algorithms import PPO, ActorCritic, SafetyCritic, Critic, Actor
 # from rsl_rl.algorithms import PPO
 # from rsl_rl_custom.modules.algorithms.ppo import PPO
 from typing import Union
@@ -26,7 +26,8 @@ class OnPolicyRunner:
     def __init__(self, env: VecEnv, train_cfg, log_dir=None, device="cpu"):
         self.cfg = train_cfg
         self.alg_cfg = train_cfg["algorithm"] # 알고리즘 관련 cfg
-        self.policy_cfg = train_cfg["policy"] # 정책/가치 관련 cfg
+        self.policy_cfg = train_cfg["policy"] # 정책 관련 cfg
+        self.value_cfg = train_cfg["value"] # 가치 관련 cfg
         self.safety_cfg = train_cfg["safety_critic"] # Safety Critic 관련 cfg
         self.device = device
         self.env = env
@@ -36,18 +37,26 @@ class OnPolicyRunner:
             num_critic_obs = extras["observations"]["critic"].shape[1]  # 설정한대로 critic obs의 수를 가져옴
         else:
             num_critic_obs = num_obs
-        actor_critic_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic 생성자 [Policy 클래스]
-        actor_critic: ActorCritic | ActorCriticRecurrent = actor_critic_class(  # ActorCritic 인스턴스 생성 (obs, critic_obs, action_space, **policy_cfg=정책관련 cfg)
+        actor_class = eval(self.policy_cfg.pop("class_name"))  # ActorCritic 생성자 [Policy 클래스]
+        critic_class = eval(self.value_cfg.pop("class_name"))  # ActorCritic 생성자 [Policy 클래스]
+        
+        actor: Actor = actor_class(  # Actor 인스턴스 생성 (obs, critic_obs, action_space, **policy_cfg=정책관련 cfg)
             num_obs, num_critic_obs, self.env.num_actions, **self.policy_cfg
         ).to(self.device)
+        critic: Critic = critic_class(
+            num_obs, num_critic_obs, self.env.num_actions, **self.value_cfg
+        ).to(self.device)
+        
         # ==== Safety Term ====
         safety_critic_class = eval(self.safety_cfg.pop("class_name"))
         safety_critic: SafetyCritic = safety_critic_class(  # ActorCritic 인스턴스 생성 (obs, critic_obs, action_space, **policy_cfg=정책관련 cfg)
             num_obs, self.env.num_actions, **self.safety_cfg
         ).to(self.device)
         
+        # ==== PPO Term ====
         alg_class = eval(self.alg_cfg.pop("class_name"))  # PPO 생성자 [알고리즘 클래스]
-        self.alg: PPO = alg_class(actor_critic, safety_critic, device=self.device, **self.alg_cfg) # PPO 인스턴스 생성 (policy, **alg_cfg=알고리즘관련 cfg)
+        self.alg: PPO = alg_class(actor, critic, safety_critic, device=self.device, **self.alg_cfg) # PPO 인스턴스 생성 (policy, **alg_cfg=알고리즘관련 cfg)
+        
         self.num_steps_per_env = self.cfg["num_steps_per_env"]  # env마다 수행할 step 수
         self.save_interval = self.cfg["save_interval"]          # 저장 간격
         self.empirical_normalization = self.cfg["empirical_normalization"] # Emprical 정규화 여부.. 
@@ -215,7 +224,7 @@ class OnPolicyRunner:
                 else:
                     self.writer.add_scalar("Episode/" + key, value, locs["it"])
                     ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
-        mean_std = self.alg.actor_critic.std.mean()
+        mean_std = self.alg.actor.std.mean()
         fps = int(self.num_steps_per_env * self.env.num_envs / (locs["collection_time"] + locs["learn_time"]))
         
         # ==== Safety Term ====
@@ -288,8 +297,10 @@ class OnPolicyRunner:
 
     def save(self, path, infos=None):
         saved_dict = {
-            "model_state_dict": self.alg.actor_critic.state_dict(),
-            "optimizer_state_dict": self.alg.optimizer.state_dict(),
+            "actor_state_dict": self.alg.actor.state_dict(),
+            "critic_state_dict": self.alg.critic.state_dict(),
+            "optimizer_actor_state_dict": self.alg.optimizer_actor.state_dict(),
+            "optimizer_critic_state_dict": self.alg.optimizer_critic.state_dict(),
             "iter": self.current_learning_iteration,
             "infos": infos,
         }
@@ -304,34 +315,39 @@ class OnPolicyRunner:
 
     def load(self, path, load_optimizer=True):
         loaded_dict = torch.load(path)
-        self.alg.actor_critic.load_state_dict(loaded_dict["model_state_dict"])
+        self.alg.actor.load_state_dict(loaded_dict["model_actor_state_dict"])
+        self.alg.critic.load_state_dict(loaded_dict["model_critic_state_dict"])
         if self.empirical_normalization:
             self.obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
             self.critic_obs_normalizer.load_state_dict(loaded_dict["critic_obs_norm_state_dict"])
         if load_optimizer:
-            self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
+            self.alg.optimizer_actor.load_state_dict(loaded_dict["optimizer_actor_state_dict"])
+            self.alg.optimizer_critic.load_state_dict(loaded_dict["optimizer_critic_state_dict"])
         self.current_learning_iteration = loaded_dict["iter"]
         return loaded_dict["infos"]
 
     def get_inference_policy(self, device=None):
         self.eval_mode()  # switch to evaluation mode (dropout for example)
         if device is not None:
-            self.alg.actor_critic.to(device)
-        policy = self.alg.actor_critic.act_inference
+            self.alg.actor.to(device)
+            self.alg.critic.to(device)
+        policy = self.alg.actor.act_inference
         if self.cfg["empirical_normalization"]:
             if device is not None:
                 self.obs_normalizer.to(device)
-            policy = lambda x: self.alg.actor_critic.act_inference(self.obs_normalizer(x))  # noqa: E731
+            policy = lambda x: self.alg.actor.act_inference(self.obs_normalizer(x))  # noqa: E731
         return policy
 
     def train_mode(self):
-        self.alg.actor_critic.train() # actor_critic을 train mode로 변경, 각각의 뉴럴넷 학습
+        self.alg.actor.train() # actor_critic을 train mode로 변경, 각각의 뉴럴넷 학습
+        self.alg.critic.train() # actor_critic을 train mode로 변경, 각각의 뉴럴넷 학습
         if self.empirical_normalization:
             self.obs_normalizer.train()
             self.critic_obs_normalizer.train()
 
     def eval_mode(self):
-        self.alg.actor_critic.eval()
+        self.alg.actor.eval()
+        self.alg.critic.eval()
         if self.empirical_normalization:
             self.obs_normalizer.eval()
             self.critic_obs_normalizer.eval()
@@ -375,7 +391,7 @@ class OnPolicyRunner:
 
         # distribution = self.alg.actor_critic._get_action_dist_from_latent(x_actor, latent_sde=latent_sde)
         # actions = distribution.get_actions(deterministic=False)
-        actions = self.alg.actor_critic.get_action_samples(col_state_samples)
+        actions = self.alg.actor.get_action_samples(col_state_samples)
 
         # qvalue_input = torch.cat([col_state_samples, actions], dim=1)
         predictions = None

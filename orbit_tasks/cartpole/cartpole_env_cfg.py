@@ -161,11 +161,11 @@ class TerminationsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]), "bounds": (-3.0, 3.0)},
     )
 
-    # (3) Pole out of bounds
-    pole_out_of_bounds = DoneTerm(
-        func=mdp.joint_pos_manual_limit,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"]), "bounds": (-0.1, 0.1)},
-    )
+    # # (3) Pole out of bounds
+    # pole_out_of_bounds = DoneTerm(
+    #     func=mdp.joint_pos_manual_limit,
+    #     params={"asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"]), "bounds": (-0.1, 0.1)},
+    # )
 
 @configclass
 class CurriculumCfg:

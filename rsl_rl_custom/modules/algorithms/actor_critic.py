@@ -159,6 +159,7 @@ class ActorCritic(nn.Module):
     
 # Policy Network
 class Actor(nn.Module):
+    is_recurrent = False
     def __init__(
         self,
         num_actor_obs,
@@ -240,6 +241,7 @@ class Actor(nn.Module):
         
 # Value Network
 class Critic(nn.Module):
+    is_recurrent = False
     def __init__(
         self,
         num_actor_obs,

@@ -103,11 +103,14 @@ class PPO:
         #     num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape, self.device
         # )
 
-    def test_mode(self):
-        self.actor_critic.test()
+    # def test_mode(self):
+    #     self.actor.test()
+    #     self.critic.test()
 
     def train_mode(self):
-        self.actor_critic.train()
+        self.actor.train()
+        self.critic.train()
+        self.safety_critic.train()
 
     def act(self, obs, critic_obs):
             
@@ -159,17 +162,26 @@ class PPO:
     def update(self):
         mean_value_loss = 0
         mean_surrogate_loss = 0
-        mean_coll_loss = 0 # ==== safe_rl ====
+        mean_collision_loss = 0 # ==== safe_rl ====
         
-        # generator_actor = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs) 
-        # optimize_actor(self)
         
-        # generator_critic = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs * 2) 
-        # optimize_critic(self)
+        mean_surrogate_loss, mean_value_loss, mean_collision_loss = self.optimize_actor(mean_value_loss, mean_surrogate_loss, mean_collision_loss)
+        mean_value_loss = self.optimize_critic(mean_value_loss)
         
-        generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs) 
-        # optimize_actor(self)
+        num_updates = self.num_learning_epochs * self.num_mini_batches
+        num_updates2 = self.num_learning_epochs * self.num_mini_batches * 2
+        mean_value_loss /= (num_updates+num_updates2)
+        mean_surrogate_loss /= num_updates
         
+        # ==== safe_rl ====
+        mean_collision_loss /= num_updates
+        self.storage.clear()
+
+        return mean_value_loss, mean_surrogate_loss, mean_collision_loss
+    
+    def optimize_actor(self, mean_value_loss, mean_surrogate_loss, mean_collision_loss) -> tuple[float, float, float]:
+        generator_actor = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs) 
+        early_stop_flag = False
         for ( # type: ignore
             obs_batch,
             critic_obs_batch,
@@ -186,8 +198,10 @@ class PPO:
             # ==== safe_rl ====
             col_prob_targets_batch,
             
-        ) in generator:
-
+        ) in generator_actor:
+            if early_stop_flag:
+                break
+            
             self.actor.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0])
             actions_log_prob_batch = self.actor.get_actions_log_prob(actions_batch)
             value_batch = self.critic.evaluate(
@@ -197,13 +211,42 @@ class PPO:
             sigma_batch = self.actor.action_std
             entropy_batch = self.actor.entropy  # ##########################################
 
-            early_stop_flag = False
+            # Surrogate loss
+            ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch)) # actions_log_prob_batch = log_prob //  torch.squeeze(old_actions_log_prob_batch) = rollout_data.old_log_prob
+            surrogate = -torch.squeeze(advantages_batch) * ratio # policy_loss_1 = torch.sqeeze(advantages_batch) 
+            surrogate_clipped = -torch.squeeze(advantages_batch) * torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) # policy_loss_1
+            surrogate_loss = torch.max(surrogate, surrogate_clipped).mean() # policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
+            
+            # Value function loss
+            value_loss = (returns_batch - value_batch).pow(2).mean()
+                                
+            # Collision loss
+            col_loss = torch.tensor(0.0, device=self.device)
+            # Minimize the probability of crashing
+            # Deciding how many samples to take to approximate Lagrange Expectation Gradient
+            if self.safe_largrange:
+                if self.n_lagrange_samples == 1:
+                    action_sample = self.actor.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0]) # a, _, _ = self.alg.forward(obs_batch)
+                    c = torch.cat(self.safety_critic.forward_safety_critic(obs_batch, action_sample), dim=1) # num env*mini_batch_size x critic 갯수
+                    c, _ = torch.max(c, dim=1, keepdim=True)
+                # else :
+                #     c, a = self.forward_sample_col_prob(rollout_data.observations, self.n_lagrange_samples, "mean")
+
+                col_loss_log = self.l_multiplier * (c - 0.1) # Tensor         0.1: c_max
+                col_loss = col_loss_log.mean() # type: ignore
+                # lagrange_penalty_mean.append(col_loss.item())
+                # lagrange_penalty_var.append(col_loss_log.var().item())
+
+            loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean() + col_loss
+            
+            
             with torch.no_grad():
                 log_ratio = actions_log_prob_batch - old_actions_log_prob_batch
                 approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio)
                 # approx_kl_divs.append(approx_kl_div)
                     
             # KL (learning rate 조정)
+            optimizer_param_groups = [self.optimizer_actor.param_groups, self.optimizer_critic.param_groups]
             if self.desired_kl is not None and self.schedule == "adaptive":
                 if self.safe_largrange and False :
                     if approx_kl_div > self.desired_kl:
@@ -211,8 +254,9 @@ class PPO:
                         if self.kl_early_stop >= self.lr_schedule_step:
                             if self.learning_rate > 1e-5:
                                 self.learning_rate *= 0.5
-                                for param_group in self.optimizer.param_groups: # update learning_rate
-                                    param_group["lr"] = self.learning_rate
+                                for optimizer_param_group in optimizer_param_groups:
+                                    for param_group in optimizer_param_group:
+                                        param_group["lr"] = self.learning_rate  
                                 self.kl_early_stop = 0
                         early_stop_flag = True
                         print(f"Early stopping at step __ due to reaching max kl: {approx_kl_div:.2f}")
@@ -232,54 +276,16 @@ class PPO:
                             self.learning_rate = max(1e-5, self.learning_rate / 1.5)
                         elif kl_mean < self.desired_kl / 2.0 and kl_mean > 0.0:
                             self.learning_rate = min(1e-2, self.learning_rate * 1.5)
-
-                        optimizer_param_groups = [self.optimizer_actor.param_groups, self.optimizer_critic.param_groups]
                         for optimizer_param_group in optimizer_param_groups:
                             for param_group in optimizer_param_group:
-                                param_group["lr"] = self.learning_rate
-
-            # Surrogate loss
-            ratio = torch.exp(actions_log_prob_batch - torch.squeeze(old_actions_log_prob_batch)) # actions_log_prob_batch = log_prob //  torch.squeeze(old_actions_log_prob_batch) = rollout_data.old_log_prob
-            surrogate = -torch.squeeze(advantages_batch) * ratio # policy_loss_1 = torch.sqeeze(advantages_batch) 
-            surrogate_clipped = -torch.squeeze(advantages_batch) * torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) # policy_loss_1
-            surrogate_loss = torch.max(surrogate, surrogate_clipped).mean() # policy_loss = -th.min(policy_loss_1, policy_loss_2).mean()
+                                param_group["lr"] = self.learning_rate    
             
-            # Value function loss
-            value_loss = (returns_batch - value_batch).pow(2).mean()
-            # if self.use_clipped_value_loss:
-            #     value_clipped = target_values_batch + (value_batch - target_values_batch).clamp(
-            #         -self.clip_param, self.clip_param
-            #     )
-            #     value_losses = (value_batch - returns_batch).pow(2)
-            #     value_losses_clipped = (value_clipped - returns_batch).pow(2)
-            #     value_loss = torch.max(value_losses, value_losses_clipped).mean()
-            # else:
-            #     value_loss = (returns_batch - value_batch).pow(2).mean()
-                # raise Exception("Not implemented")
-                
-
-            # Collision loss
-            col_loss = torch.tensor(0.0, device=self.device)
-            # Minimize the probability of crashing
-            # Deciding how many samples to take to approximate Lagrange Expectation Gradient
-            if self.safe_largrange:
-                if self.n_lagrange_samples == 1:
-                    action_sample = self.actor.act(obs_batch, masks=masks_batch, hidden_states=hid_states_batch[0]) # a, _, _ = self.alg.forward(obs_batch)
-                    c = torch.cat(self.safety_critic.forward_safety_critic(obs_batch, action_sample), dim=1) # num env*mini_batch_size x critic 갯수
-                    c, _ = torch.max(c, dim=1, keepdim=True)
-                # else :
-                #     c, a = self.forward_sample_col_prob(rollout_data.observations, self.n_lagrange_samples, "mean")
-
-                col_loss_log = self.l_multiplier * (c - 0.1) # Tensor         0.1: c_max
-                col_loss = col_loss_log.mean() # type: ignore
-                # lagrange_penalty_mean.append(col_loss.item())
-                # lagrange_penalty_var.append(col_loss_log.var().item())
-            # loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
-            # if self.safe_largrange:
-            loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean() + col_loss
             
+                                
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
+            mean_collision_loss += col_loss.item()
+        
             
             # print("SL:", surrogate_loss.item(), "VL:", (self.value_loss_coef * value_loss).item(), "EL:", (self.entropy_coef * entropy_batch.mean()).item(), "CL:", col_loss.item(), "TOTAL:", loss.item())
             # else :
@@ -292,34 +298,55 @@ class PPO:
             # Gradient step
             
             # ==== safe_rl ====
-            # 라그랑주 상수 업데이트하지만, 0으로 되지는 않도록 하기
-            
+            # 라그랑주 상수 업데이트하지만, 0으로 되지는 않도록 하기            
             if self.safe_largrange:
-                # self.l_multiplier = max(0.05, self.l_multiplier + 1e-3 * (c.mean().item() - 0.1))
                 self.l_multiplier = max(0.05, self.l_multiplier + 1e-4 * (c.mean().item() - 0.1))
-            
-            # self.optimizer.zero_grad()
-            # loss.backward()
-            # nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm) 
-            # self.optimizer.step()
             
             self.optimizer_actor.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
             self.optimizer_actor.step()
+   
+        return mean_surrogate_loss, mean_value_loss, mean_collision_loss
+    
+    def optimize_critic(self, mean_value_loss) -> None:
+        generator_critic = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs * 2) 
+        
+        for ( # type: ignore
+            obs_batch,
+            critic_obs_batch,
+            actions_batch,
+            target_values_batch,
+            advantages_batch,
+            returns_batch,
+            old_actions_log_prob_batch,
+            old_mu_batch,
+            old_sigma_batch,
+            hid_states_batch,
+            masks_batch,
             
+            # ==== safe_rl ====
+            col_prob_targets_batch,
+            
+        ) in generator_critic:
+            
+            value_batch = self.critic.evaluate(
+                critic_obs_batch, masks=masks_batch, hidden_states=hid_states_batch[1]
+            )
             # Value function loss
             returns_batch = returns_batch.requires_grad_()
-            target_values_batch = target_values_batch.requires_grad_()
-            value_loss = torch.Tensor(returns_batch - target_values_batch).pow(2).mean()
+            value_batch = value_batch.requires_grad_()
+            value_loss = (returns_batch - value_batch).pow(2).mean()
+            
+            mean_value_loss += value_loss.item()
+                      
+            # Value function loss
             self.optimizer_critic.zero_grad()
             value_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.max_grad_norm)
-            self.optimizer_critic.step()           
-
+            self.optimizer_critic.step()     
+                                  
             # ==== safe_rl ====
-            mean_coll_loss += col_loss.item()            
-            # optimize collision network
             current_col_prob = self.safety_critic.forward_safety_critic(obs_batch, actions_batch)
             target = col_prob_targets_batch.view(-1, 1) # 텐서 크기 (?,1) 로 변환
             col_net_loss = 0.5 * sum([weighted_bce(pred, target) for pred in current_col_prob])
@@ -327,23 +354,8 @@ class PPO:
             self.optimizer_safety.zero_grad()
             col_net_loss.backward()
             self.optimizer_safety.step()
+        return mean_value_loss
             
-            if early_stop_flag:
-                break
-
-        num_updates = self.num_learning_epochs * self.num_mini_batches
-        mean_value_loss /= num_updates
-        mean_surrogate_loss /= num_updates
-        
-        # ==== safe_rl ====
-        mean_coll_loss /= num_updates
-        self.storage.clear()
-
-        return mean_value_loss, mean_surrogate_loss, mean_coll_loss
-    def optimize_actor(self) -> None :
-        pass
-    def optimize_critic(self) -> None :
-        pass
 def weighted_bce(pred: torch.Tensor,   # safety critic 계산값.. safety 확률 얻음
                  target: torch.Tensor, 
                  p_threshold=0.5) -> torch.Tensor :

@@ -61,5 +61,5 @@ class CartpolePPORunnerCfg(RslRlOnPolicyRunnerCfg):
         lagrange_penalty_mean=[],
         lagrange_penalty_var=[],
         collision_reward = -10,
-        gamma_col_net = 0.95        
+        gamma_col_net = 0.9        
     )

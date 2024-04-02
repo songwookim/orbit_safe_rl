@@ -250,7 +250,7 @@ class CollisionRolloutStorage:
         self.collision_prob_policy = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device) # estimated probability of collisions by sampling from policy P(x)
         self.collision_panalty = collision_reward 
         self.min_reward = 0
-        self.min_value = torch.tensor(0).cuda() 
+        self.min_value = torch.tensor(0).cuda()
         self.collision_prob_target = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device) # type: ignore
         self.collision_rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)  # type: ignore
         
@@ -308,7 +308,7 @@ class CollisionRolloutStorage:
                         last_collision_prob_policy: Optional[torch.Tensor] = None,
                         gamma_col_net: float = 1.0,):
         # 1. 클램핑을 위해, collision 이 일어나지 않은 minimum 값을 가져온다.
-        self.min_reward = min(self.min_reward, torch.min(self.rewards[self.rewards > self.collision_panalty])) # type: ignore
+        self.min_reward = min(self.min_reward, torch.min(self.rewards[self.rewards > self.collision_panalty])) 
         
         # 2. 충돌 확률에 대한 목표값 정한다.
         # 타겟 충돌 확률을 계산한다.
@@ -319,6 +319,7 @@ class CollisionRolloutStorage:
             self.returns, self.qs = self.compute_critic_targets(last_values, gamma, lam, safe_multi)
             batch_min_value = torch.min(torch.min(self.qs), torch.min(self.values))
             self.min_value = torch.min(self.min_value, batch_min_value)
+        self.min_value = torch.tensor(0).cuda()
         
         # Modes:
         # V1a:  A = [r + y * (V(x') - Vmin) * P(x'))] - (V(x) - Vmin) * P(x)
@@ -337,8 +338,10 @@ class CollisionRolloutStorage:
                 next_col_prob = last_collision_prob_value
                 next_collision_prob_policy = last_collision_prob_policy
             else:
+                next_col_prob = self.collision_prob[step + 1]
+                next_collision_prob_policy = self.collision_prob_policy[step + 1]
                 next_values = self.values[step + 1]
-                
+            next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1    
             # ==== safety term ====
             next_non_col = torch.abs(self.rewards[step] - self.collision_panalty) > 0.001  # -> v1b, v1c 에 사용
             
@@ -350,12 +353,10 @@ class CollisionRolloutStorage:
                 reward = self.rewards[step]       
                 
             if safe_multi:
-                next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
                 f_next = next_is_not_terminal * (next_values - self.min_value) * (1 - next_collision_prob_policy)
                 f = (self.values[step] - self.min_value) * (1 - self.collision_prob_policy[step])
                 delta = (reward + gamma * f_next) - f
             else : 
-                next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
                 # delta = self.qs[step] - self.values[step].flatten() # delta = r_t + gamma * V(s_{t+1}) - V(s_t)
                 delta = reward + next_is_not_terminal * gamma * next_values - self.values[step]
                 
@@ -380,25 +381,25 @@ class CollisionRolloutStorage:
         self.advantages = self.returns - self.values
         self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8) # advantage 정규화
         
-    # def compute_returns(self, last_values, gamma, lam, safe_multi: bool = False, 
-    #                      last_collision_prob_value: Optional[torch.Tensor] = None,
-    #                      last_colllision_prob_policy: Optional[torch.Tensor] = None,
-    #                      gamma_col_net: float = 1.0,):
-    #     advantage = 0 # Truncated GAE
-    #     for step in reversed(range(self.num_transitions_per_env)):
-    #         if step == self.num_transitions_per_env - 1:
-    #             next_values = last_values
-    #         else:
-    #             next_values = self.values[step + 1]
-    #         next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
-    #         delta     = self.rewards[step] + next_is_not_terminal * gamma * next_values - self.values[step] # delta = r_t + gamma * V(s_{t+1}) - V(s_t)
-    #         advantage = delta + next_is_not_terminal * gamma * lam * advantage                              # advantage = delta + gamma * lamda * advantage 이전 단계 advantage 를 더함
-    #         self.returns[step] = advantage + self.values[step]  # Q = V + A
+    def compute_returns2(self, last_values, gamma, lam, safe_multi: bool = False, 
+                         last_collision_prob_value: Optional[torch.Tensor] = None,
+                         last_collision_prob_policy: Optional[torch.Tensor] = None,
+                         gamma_col_net: float = 1.0,):
+        advantage = 0 # Truncated GAE
+        for step in reversed(range(self.num_transitions_per_env)):
+            if step == self.num_transitions_per_env - 1:
+                next_values = last_values
+            else:
+                next_values = self.values[step + 1]
+            next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
+            delta     = self.rewards[step] + next_is_not_terminal * gamma * next_values - self.values[step] # delta = r_t + gamma * V(s_{t+1}) - V(s_t)
+            advantage = delta + next_is_not_terminal * gamma * lam * advantage                              # advantage = delta + gamma * lamda * advantage 이전 단계 advantage 를 더함
+            self.returns[step] = advantage + self.values[step]  # Q = V + A
 
-    #     # Compute and normalize the advantages
-    #     # 16 x 4096 x 1
-    #     self.advantages = self.returns - self.values            # advantage = returns - values
-    #     self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8) # advantage 정규화
+        # Compute and normalize the advantages
+        # 16 x 4096 x 1
+        self.advantages = self.returns - self.values            # advantage = returns - values
+        self.advantages = (self.advantages - self.advantages.mean()) / (self.advantages.std() + 1e-8) # advantage 정규화
 
     def get_statistics(self):
         done = self.dones
@@ -488,11 +489,11 @@ class CollisionRolloutStorage:
             else:
                 next_values = self.values[step + 1]
 
-            if safe_multi:
-                reward = torch.clamp(self.rewards[step], min=self.min_reward, max=torch.tensor(torch.inf).cuda())
-                # reward = torch.clip(self.rewards[step], min=self.min_reward, max=torch.tensor(torch.inf))
-            else:
-                reward = self.rewards[step]
+            # if safe_multi:
+            #     reward = torch.clamp(self.rewards[step], min=self.min_reward, max=torch.tensor(torch.inf).cuda())
+            #     # reward = torch.clip(self.rewards[step], min=self.min_reward, max=torch.tensor(torch.inf))
+            # else:
+            reward = self.rewards[step]
 
             next_is_not_terminal = 1.0 - self.dones[step].float() # done 이면 0, 아니면 1
             # TD Lambda Critic

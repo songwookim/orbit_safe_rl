@@ -261,21 +261,14 @@ class Critic(nn.Module):
         critic_layers.append(activation)
         for layer_index in range(len(critic_hidden_dims)):
             if layer_index == len(critic_hidden_dims) - 1:
-                critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], num_actions))
+                critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], 1))
             else:
                 critic_layers.append(nn.Linear(critic_hidden_dims[layer_index], critic_hidden_dims[layer_index + 1]))
                 critic_layers.append(activation)
         self.critic = nn.Sequential(*critic_layers)
         
         print(f"Critic MLP: {self.critic}")
-        
-        # Action noise
-        self.std = nn.Parameter(init_noise_std * torch.ones(num_actions))
-        self.distribution : Normal = None # type: ignore
-        
-        # disable args validation for speedup
-        Normal.set_default_validate_args = False # type: ignore
-        
+            
     @staticmethod
     # not used at the moment
     def init_weights(sequential, scales):
@@ -290,18 +283,6 @@ class Critic(nn.Module):
     def forward(self):
         raise NotImplementedError
 
-    @property
-    def action_mean(self):
-        return self.distribution.mean
-
-    @property
-    def action_std(self):
-        return self.distribution.stddev
-
-    @property
-    def entropy(self):
-        return self.distribution.entropy().sum(dim=-1)
-            
     def evaluate(self, critic_observations, **kwargs):
         value = self.critic(critic_observations)
         return value

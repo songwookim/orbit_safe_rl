@@ -16,7 +16,8 @@ from omni.isaac.orbit.managers import SceneEntityCfg
 from omni.isaac.orbit.managers import TerminationTermCfg as DoneTerm
 from omni.isaac.orbit.scene import InteractiveSceneCfg
 from omni.isaac.orbit.utils import configclass
-
+from omni.isaac.orbit.sensors import ContactSensor
+from omni.isaac.orbit.sensors import ContactSensorCfg
 import omni.isaac.orbit_tasks.classic.cartpole.mdp as mdp
 
 ##
@@ -53,6 +54,10 @@ class CartpoleSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.DistantLightCfg(color=(0.9, 0.9, 0.9), intensity=2500.0),
         init_state=AssetBaseCfg.InitialStateCfg(rot=(0.738, 0.477, 0.477, 0.0)),
     )
+    
+    # contact_forces = ContactSensorCfg(
+    #     prim_path="{ENV_REGEX_NS}/Sensor" #, update_period=0.0, history_length=6, debug_vis=True
+    # )
 
 
 ##
@@ -161,6 +166,10 @@ class TerminationsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]), "bounds": (-3.0, 3.0)},
     )
 
+    # illegal_sensor = DoneTerm(
+    #     func=mdp.illegal_contact,
+    #     params={"sensor_cfg": SceneEntityCfg("name": "contact_forces", "track_air_time":True, "track_pose":True)
+    #             ,"threshold": 0.0})
     # # (3) Pole out of bounds
     # pole_out_of_bounds = DoneTerm(
     #     func=mdp.joint_pos_manual_limit,

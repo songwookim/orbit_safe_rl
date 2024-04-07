@@ -308,7 +308,8 @@ class CollisionRolloutStorage:
                         last_collision_prob_policy: Optional[torch.Tensor] = None,
                         gamma_col_net: float = 1.0,):
         # 1. 클램핑을 위해, collision 이 일어나지 않은 minimum 값을 가져온다.
-        self.min_reward = min(self.min_reward, torch.min(self.rewards[self.rewards > self.collision_panalty])) 
+        temp_list = self.rewards[self.rewards > self.collision_panalty]
+        self.min_reward = min(self.min_reward, torch.min(temp_list) if temp_list.numel() > 0 else 0)
         
         # 2. 충돌 확률에 대한 목표값 정한다.
         # 타겟 충돌 확률을 계산한다.
@@ -319,7 +320,7 @@ class CollisionRolloutStorage:
             self.returns, self.qs = self.compute_critic_targets(last_values, gamma, lam, safe_multi)
             batch_min_value = torch.min(torch.min(self.qs), torch.min(self.values))
             self.min_value = torch.min(self.min_value, batch_min_value)
-        self.min_value = torch.tensor(0).cuda()
+        # self.min_value = torch.tensor(0).cuda()
         
         # Modes:
         # V1a:  A = [r + y * (V(x') - Vmin) * P(x'))] - (V(x) - Vmin) * P(x)

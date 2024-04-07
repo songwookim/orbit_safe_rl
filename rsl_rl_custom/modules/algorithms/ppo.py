@@ -125,7 +125,7 @@ class PPO:
         self.transition.critic_observations = critic_obs # transition에 현재 state(critic_obs) 저장
         return self.transition.actions
         
-    # 원래 있거에서 추가 대체, collision(safety term) 관련 추가하기
+    # 원래 있거에서 추가 대체, collision(safety term) 관련 추가
     def process_env_step_with_safety(self, rewards, dones, infos, 
                                      collision_prob: torch.Tensor,
                                      collision_prob_policy: torch.Tensor,

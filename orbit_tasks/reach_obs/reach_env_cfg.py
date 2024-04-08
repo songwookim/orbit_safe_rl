@@ -49,9 +49,11 @@ class ReachSceneCfg(InteractiveSceneCfg):
     table = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Table",
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd",
+            # usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/SeattleLabTable/table_instanceable.usd",
+            usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Mounts/Stand/stand_instanceable.usd",
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.55, 0.0, 0.0), rot=(0.70711, 0.0, 0.0, 0.70711)),
+        # init_state=AssetBaseCfg.InitialStateCfg(pos=(0.55, 0.0, 0.0), rot=(0.70711, 0.0, 0.0, 0.70711)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0., 0., 0.), rot=(0.70711, 0.0, 0.0, 0.70711)), # for stand
     )
 
     # robots
@@ -66,7 +68,7 @@ class ReachSceneCfg(InteractiveSceneCfg):
     # objects
     object: RigidObjectCfg = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Object",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.3, -0.1, 0.255], rot=[1, 0, 0, 0]),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.4, -0.1, 0.455], rot=[1, 0, 0, 0]),
             spawn=UsdFileCfg(
                 usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
                 scale=(5, 0.1, 5),
@@ -109,9 +111,9 @@ class CommandsCfg:
             # pitch = MISSING,  # depends on end-effector axis
             # yaw=(-3.14, 3.14),
 
-            pos_x=(0.35, 0.35),
-            pos_y=(-0.2, -0.2),
-            pos_z=(0.35, 0.35),
+            pos_x=(0.45, 0.45),
+            pos_y=(-0.35, -0.35),
+            pos_z=(0.55, 0.55),
             roll=(0.0, 0.0),
             pitch = MISSING,  # depends on end-effector axis
             yaw=(3.14, 3.14),            
@@ -210,8 +212,8 @@ class RewardsCfg:
 class TerminationsCfg:
     """Termination terms for the MDP."""
 
-    # time_out : DoneTerm = None # type: ignore
-    time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    time_out : DoneTerm = None # type: ignore
+    # time_out = DoneTerm(func=mdp.time_out, time_out=True)
     
     illegal_contact = DoneTerm(
         func=mdp.illegal_contact, 

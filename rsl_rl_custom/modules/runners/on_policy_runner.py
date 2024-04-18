@@ -176,7 +176,7 @@ class OnPolicyRunner:
 
                 # Learning step
                 start = stop
-                last_colllision_prob_policy, _ = collision_prob_policy, _ = self.forward_sample_col_prob(critic_obs, self.n_col_value_samples, reduction="mean")
+                last_colllision_prob_policy, _ = self.forward_sample_col_prob(critic_obs, self.n_col_value_samples, reduction="mean")
                 self.alg.compute_returns(critic_obs, actions, last_colllision_prob_policy) # 마지막 value 계산
 
             mean_value_loss, mean_surrogate_loss, mean_collision_loss = self.alg.update() # !TODO: 얘가 핵심
@@ -341,9 +341,11 @@ class OnPolicyRunner:
     def train_mode(self):
         self.alg.actor.train() # actor_critic을 train mode로 변경, 각각의 뉴럴넷 학습
         self.alg.critic.train() # actor_critic을 train mode로 변경, 각각의 뉴럴넷 학습
+        self.alg.safety_critic.train() # actor_critic을 train mode로 변경, 각각의 뉴럴넷 학습
         if self.empirical_normalization:
             self.obs_normalizer.train()
             self.critic_obs_normalizer.train()
+            
 
     def eval_mode(self):
         self.alg.actor.eval()

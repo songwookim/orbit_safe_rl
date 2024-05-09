@@ -26,7 +26,7 @@ from omni.isaac.orbit.sim.spawners.from_files.from_files_cfg import UsdFileCfg
 from omni.isaac.orbit.utils import configclass
 from omni.isaac.orbit.utils.assets import ISAAC_NUCLEUS_DIR
 from omni.isaac.orbit.utils.noise import AdditiveUniformNoiseCfg as Unoise
-
+import math
 # import omni.isaac.orbit_tasks.manipulation.reach.mdp as mdp
 import orbit_tasks.reach_obs.mdp as mdp
 
@@ -55,7 +55,10 @@ class ReachSceneCfg(InteractiveSceneCfg):
         # init_state=AssetBaseCfg.InitialStateCfg(pos=(0.55, 0.0, 0.0), rot=(0.70711, 0.0, 0.0, 0.70711)),
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0., 0., 0.), rot=(0.70711, 0.0, 0.0, 0.70711)), # for stand
     )
-
+    
+    environment1: AssetBaseCfg = None
+    environment2: AssetBaseCfg = None
+    
     # robots
     robot: ArticulationCfg = MISSING
 
@@ -65,13 +68,103 @@ class ReachSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.DomeLightCfg(color=(0.75, 0.75, 0.75), intensity=2500.0),
     )
     
-    # objects
+    # # task1) reach
+    # object: RigidObjectCfg = RigidObjectCfg(
+    #         prim_path="{ENV_REGEX_NS}/Object",
+    #         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.4, -0.1, 0.455], rot=[1, 0, 0, 0]),
+    #         spawn=UsdFileCfg(
+    #             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+    #             scale=(5, 0.1, 5),
+    #             rigid_props=RigidBodyPropertiesCfg(
+    #                 # solver_position_iteration_count=16,
+    #                 # solver_velocity_iteration_count=1,
+    #                 # max_angular_velocity=1000.0,
+    #                 # max_linear_velocity=1000.0,
+    #                 # max_depenetration_velocity=5.0,
+    #                 # disable_gravity=True,
+    #                 kinematic_enabled=True,
+    #             ),
+    #             collision_props=sim_utils.CollisionPropertiesCfg(),
+    #         ),
+    #     )
+    
+    # # task 2
+    # # objects
+    # object: RigidObjectCfg = RigidObjectCfg(
+    #         prim_path="{ENV_REGEX_NS}/Object",
+    #         # task 1
+    #         # init_state=RigidObjectCfg.InitialStateCfg(pos=[0.4, -0.1, 0.395], rot=[1, 0, 0, 0]),
+            
+    #         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, -0.1, 0.695], rot=[1, 0, 0, 0]),
+    #         spawn=UsdFileCfg(
+    #             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd", # http://localhost:34080/omniverse://localhost/NVIDIA/Assets/Isaac/2022.1/Isaac/Props/Shapes/shapes.usd
+    #             scale=(0, 0., 0),
+    #             rigid_props=RigidBodyPropertiesCfg(
+    #                 kinematic_enabled=True,
+    #             ),
+    #             collision_props=sim_utils.CollisionPropertiesCfg(),
+    #         ),
+    #     )
+    
+    #     # objects
+    # object2: RigidObjectCfg = RigidObjectCfg(
+    #         prim_path="{ENV_REGEX_NS}/Object2",
+    #         # task 1
+    #         # init_state=RigidObjectCfg.InitialStateCfg(pos=[0.4, -0.1, 0.455], rot=[1, 0, 0, 0]),
+            
+    #         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.5, -0.1, 0.955], rot=[1, 0, 0, 0]),
+    #         spawn=UsdFileCfg(
+    #             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+    #             scale=(0, 0., 0),
+    #             rigid_props=RigidBodyPropertiesCfg(
+    #                 kinematic_enabled=True,
+    #             ),
+    #             collision_props=sim_utils.CollisionPropertiesCfg(),
+    #         ),
+    #     )
+    
+    # # task 3
+    # # objects
+    # object: RigidObjectCfg = RigidObjectCfg(
+    #         prim_path="{ENV_REGEX_NS}/Object",
+    #         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.45, -0.55, 0.395], rot=[0.9238795, 0, 0, -0.3826834]),
+    #         spawn=UsdFileCfg(
+    #             # usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd", # http://localhost:34080/omniverse://localhost/NVIDIA/Assets/Isaac/2022.1/Isaac/Props/Shapes/sphere.usd
+    #             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Shapes/sphere.usd",
+    #             scale=(5, 0.1, 2),
+    #             rigid_props=RigidBodyPropertiesCfg(
+    #                 kinematic_enabled=True,
+    #             ),
+    #             collision_props=sim_utils.CollisionPropertiesCfg(kinematic_enabled=True),
+    #         ),
+    #     )
+    
+    #     # objects
+    # object2: RigidObjectCfg = RigidObjectCfg(
+    #         prim_path="{ENV_REGEX_NS}/Object2",
+    #         # task 1
+            
+    #         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.45, -0.55, 0.855], rot=[0.9238795, 0, 0, -0.3826834]),
+    #         spawn=UsdFileCfg(
+    #             usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
+    #             scale=(5, 0.1, 2),
+    #             rigid_props=RigidBodyPropertiesCfg(
+    #                 kinematic_enabled=True,
+    #             ),
+    #             collision_props=sim_utils.CollisionPropertiesCfg(),
+    #         ),
+    #     )
+    
+    
+    # task 4
     object: RigidObjectCfg = RigidObjectCfg(
             prim_path="{ENV_REGEX_NS}/Object",
-            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.4, -0.1, 0.455], rot=[1, 0, 0, 0]),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=[0.6, -0., 0.955], rot=[1, 0, 0, 0]),
             spawn=UsdFileCfg(
                 usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Blocks/DexCube/dex_cube_instanceable.usd",
-                scale=(5, 0.1, 5),
+                visual_material_path="{ISAAC_NUCLEUS_DIR}/Materialss/Textures/Patterns/nv_steel_corrogated_weatered.jpg",
+                # usd_path=f"{ISAAC_NUCLEUS_DIR}/Props/Shapes/cube.usd",
+                scale=(5, 15, 0.1),
                 rigid_props=RigidBodyPropertiesCfg(
                     # solver_position_iteration_count=16,
                     # solver_velocity_iteration_count=1,
@@ -111,12 +204,37 @@ class CommandsCfg:
             # pitch = MISSING,  # depends on end-effector axis
             # yaw=(-3.14, 3.14),
 
-            pos_x=(0.45, 0.45),
-            pos_y=(-0.35, -0.35),
-            pos_z=(0.55, 0.55),
-            roll=(0.0, 0.0),
-            pitch = MISSING,  # depends on end-effector axis
-            yaw=(3.14, 3.14),            
+            # # task1) reach
+            # pos_x=(0.45, 0.45),
+            # pos_y=(-0.35, -0.35),
+            # pos_z=(0.55, 0.55),
+            # roll=(0.0, 0.0),
+            # pitch = MISSING,  # depends on end-effector axis
+            # yaw=(3.14, 3.14),
+            
+            # # task2) reach and orient
+            # pos_x=(0.45, 0.45),
+            # pos_y=(-0.35, -0.35),
+            # pos_z=(0.6, 0.6),
+            # roll=(3*math.pi/2, 3*math.pi/2), 
+            # pitch=(0, 0),# MISSING,       
+            # yaw=(math.pi/2, math.pi/2),    # z-axis(파랑) 이후 roll,pitch 순서로 회전
+            
+            # # task3) reach and orient
+            # pos_x=(0.15, 0.15),
+            # pos_y=(-0.65, -0.65),
+            # pos_z=(0.6, 0.6),
+            # roll=(3*math.pi/2, 3*math.pi/2), 
+            # pitch=(0, 0),# MISSING,       
+            # yaw=(math.pi/2, math.pi/2),    # z-axis(파랑) 이후 roll,pitch 순서로 회전
+            
+            # task4) shelf
+            pos_x=(0.5, 0.5),
+            pos_y=(0.24, 0.24),
+            pos_z=(1.1, 1.1),
+            roll=(3*math.pi/2, 3*math.pi/2), 
+            pitch=(0, 0),# MISSING,       
+            yaw=(-math.pi/2, math.pi/2),    # z-axis(파랑) 이후 roll,pitch 순서로 회전
         ),
     )
 
@@ -138,8 +256,11 @@ class ObservationsCfg:
         """Observations for policy group."""
 
         # observation terms (order preserved)
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
+        # joint_pos = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
+        # joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel)
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel)
+        
         pose_command = ObsTerm(func=mdp.generated_commands, params={"command_name": "ee_pose"})
         actions = ObsTerm(func=mdp.last_action)
 
@@ -159,8 +280,8 @@ class EventCfg:
         func=mdp.reset_joints_by_scale,
         mode="reset",
         params={
-            # "position_range":  (-1.5, 1.5),  
-            "position_range": (1.5, 1.5),
+            # "position_range":  (-1.5, 0.5),  
+            "position_range": (1, 1),
             "velocity_range": (0.0, 0.0),
         },
     )
@@ -184,19 +305,21 @@ class EventCfg:
 class RewardsCfg:
     """Reward terms for the MDP."""
     # # (2) Failure penalty
-    terminating = RewTerm(func=mdp.is_terminated, weight=-2.0)
+    terminating = RewTerm(func=mdp.is_terminated, weight=-1.0) 
+    # terminating = RewTerm(func=mdp.is_terminated, weight=-0.1) 
     alive = RewTerm(func=mdp.is_alive, weight=1.0)
     
     # task terms
     end_effector_position_tracking = RewTerm(
         func=mdp.position_command_error,
         # weight=-0.2,
-        weight=-1,
+        weight=-1,                               
         params={"asset_cfg": SceneEntityCfg("robot", body_names=MISSING), "command_name": "ee_pose"},
     )
     end_effector_orientation_tracking = RewTerm(
         func=mdp.orientation_command_error,
         weight=-0.05,
+        # weight=-0.1,
         params={"asset_cfg": SceneEntityCfg("robot", body_names=MISSING), "command_name": "ee_pose"},
     )
 
@@ -205,6 +328,7 @@ class RewardsCfg:
     joint_vel = RewTerm(
         func=mdp.joint_vel_l2,
         weight=-0.0001,
+        # weight=-0.005,
         params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
@@ -217,13 +341,8 @@ class TerminationsCfg:
     
     illegal_contact = DoneTerm(
         func=mdp.illegal_contact, 
-        params={"threshold": 50, "sensor_cfg": SceneEntityCfg("contact_forces")}
+        params={"threshold": 1, "sensor_cfg": SceneEntityCfg("contact_forces")}
         )
-
-    # base_contact = DoneTerm(
-    #     func=mdp.illegal_contact,
-    #     params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="base_link"), "threshold": 1.0},
-    # )
 
 
 @configclass
@@ -261,7 +380,8 @@ class ReachEnvCfg(RLTaskEnvCfg):
         # general settings
         self.decimation = 2
         self.episode_length_s = 12.0
-        self.viewer.eye = (3.5, 3.5, 3.5)
+        self.viewer.eye = (0.5, -1.0, 2.5)
+        self.viewer.lookat = (3.0, 4.0, -2.0)
         # simulation settings
         self.sim.dt = 1.0 / 60.0
         

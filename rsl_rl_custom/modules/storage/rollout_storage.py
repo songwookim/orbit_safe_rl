@@ -273,7 +273,8 @@ class CollisionRolloutStorage:
         # ==== Safety Term ====
         self.collision_prob[self.step].copy_(transition.collision_prob)
         self.collision_prob_policy[self.step].copy_(transition.collision_prob_policy)
-        self.collision_rewards[self.step] = torch.Tensor(transition.rewards  < 0.99 * self.collision_panalty).cuda().view(-1,1) # type: ignore
+        self.collision_rewards[self.step] = torch.Tensor(transition.rewards  < 0.99 * self.collision_panalty).cuda().view(-1,1) # torch.ones_like(transition.dones.view(-1, 1))*min(transition.rewards)
+        # self.collision_rewards[self.step] = torch.ones_like(transition.dones.view(-1, 1))*min(transition.rewards) # 
         
         self.step += 1
         

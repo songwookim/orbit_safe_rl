@@ -150,6 +150,8 @@ class RslRlOnPolicyRunnerCfg:
 
     empirical_normalization: bool = MISSING
     """Whether to use empirical normalization."""
+    
+    n_col_value_samples: int = MISSING
 
     policy: RslRlPpoActorCfg = MISSING
     """The policy configuration."""

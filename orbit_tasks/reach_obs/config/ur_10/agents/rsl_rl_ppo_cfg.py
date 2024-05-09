@@ -22,6 +22,7 @@ class UR10ReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     run_name = ""
     resume = False
     empirical_normalization = False
+    n_col_value_samples = 40
     policy = RslRlPpoActorCfg(
         init_noise_std=1.0,
         actor_hidden_dims=[256, 128,64],
@@ -44,7 +45,8 @@ class UR10ReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
-        entropy_coef=0.006,
+        # entropy_coef=0.00001,
+        entropy_coef=0.1,
         num_learning_epochs=5,
         num_mini_batches=4,
         learning_rate=1.0e-4,

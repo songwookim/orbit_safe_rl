@@ -9,7 +9,7 @@ import torch.optim as optim
 
 import os 
 import sys
-from rsl_rl_custom.modules.algorithms.actor_critic import ActorCritic, SafetyCritic, Actor, Critic
+from rsl_rl_custom.modules.algorithms.actor_critic import SafetyCritic, Actor, Critic
 # from rsl_rl.storage import RolloutStorage
 from rsl_rl_custom.modules.storage import RolloutStorage, CollisionRolloutStorage
 from torch.nn.functional import binary_cross_entropy

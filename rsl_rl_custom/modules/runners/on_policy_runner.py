@@ -84,7 +84,7 @@ class OnPolicyRunner:
         self.git_status_repos = [rsl_rl.__file__]
         
         # ==== Safety Term ====
-        self.n_col_value_samples = self.cfg.get("n_col_value_samples", 10) # 충돌 확률 샘플링 수
+        self.n_col_value_samples = self.cfg.get("n_col_value_samples", 20) # 충돌 확률 샘플링 수
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False):
         # initialize writer
@@ -153,7 +153,6 @@ class OnPolicyRunner:
                 
                     # (safety term 추가)self.alg.process_env_step(rewards, dones, infos) # self.transition.{reward, dones} 저장 후 reset
                     self.alg.process_env_step_with_safety(rewards, dones, infos, collision_prob, collision_prob_policy) # self.transition.{reward, dones} 저장 후 reset
-                    # self.alg.process_env_step_with_safety(rewards, dones, infos, collision_prob, collision_prob_policy) # self.transition.{reward, dones} 저장 후 reset
 
                     if self.log_dir is not None:
                         # Book keeping
@@ -299,8 +298,12 @@ class OnPolicyRunner:
         saved_dict = {
             "actor_state_dict": self.alg.actor.state_dict(),
             "critic_state_dict": self.alg.critic.state_dict(),
+            "safety_critic_state_dict": self.alg.safety_critic.state_dict(), # safety critic 저장
+            
             "optimizer_actor_state_dict": self.alg.optimizer_actor.state_dict(),
             "optimizer_critic_state_dict": self.alg.optimizer_critic.state_dict(),
+            "optimizer_safety_state_dict": self.alg.optimizer_safety.state_dict(), # safety critic optimizer 저장
+            
             "iter": self.current_learning_iteration,
             "infos": infos,
         }
@@ -317,12 +320,18 @@ class OnPolicyRunner:
         loaded_dict = torch.load(path)
         self.alg.actor.load_state_dict(loaded_dict["actor_state_dict"])
         self.alg.critic.load_state_dict(loaded_dict["critic_state_dict"])
+        # add safety term
+        self.alg.safety_critic.load_state_dict(loaded_dict["safety_critic_state_dict"])
+        
         if self.empirical_normalization:
             self.obs_normalizer.load_state_dict(loaded_dict["obs_norm_state_dict"])
             self.critic_obs_normalizer.load_state_dict(loaded_dict["critic_obs_norm_state_dict"])
         if load_optimizer:
             self.alg.optimizer_actor.load_state_dict(loaded_dict["optimizer_actor_state_dict"])
             self.alg.optimizer_critic.load_state_dict(loaded_dict["optimizer_critic_state_dict"])
+            
+            # add safety term
+            self.alg.optimizer_safety.load_state_dict(loaded_dict["optimizer_safety_state_dict"])
         self.current_learning_iteration = loaded_dict["iter"]
         return loaded_dict["infos"]
 
@@ -331,6 +340,7 @@ class OnPolicyRunner:
         if device is not None:
             self.alg.actor.to(device)
             self.alg.critic.to(device)
+            self.alg.safety_critic.to(device)
         policy = self.alg.actor.act_inference
         if self.cfg["empirical_normalization"]:
             if device is not None:

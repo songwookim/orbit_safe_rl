@@ -49,13 +49,13 @@ from rsl_rl_custom.modules.runners.on_policy_runner import OnPolicyRunner  # fro
 from rsl_rl_custom.modules.runners.rsl_rl_cfgs import RslRlOnPolicyRunnerCfg  # from rsl_rl.modules.runners.rsl_rl_cfgs import RslRlOnPolicyRunnerCfg
 import orbit_tasks  # noqa: F401
 
-import omni.isaac.contrib_tasks  # noqa: F401
 import omni.isaac.orbit_tasks  # noqa: F401
 from omni.isaac.orbit_tasks.utils import get_checkpoint_path, parse_env_cfg
 from omni.isaac.orbit_tasks.utils.wrappers.rsl_rl import (
     # RslRlOnPolicyRunnerCfg,
     RslRlVecEnvWrapper,
     export_policy_as_onnx,
+    
 )
 
 
@@ -96,13 +96,13 @@ def main():
     # simulate environment
     while simulation_app.is_running():
         # run everything in inference mode
-        with torch.inference_mode():
+        # with torch.inference_mode():
             # agent stepping
-            actions = policy(obs)
-            # env stepping
-            
-            obs, _, _, _ = env.step(actions)
-            # obs, _, _, _ = env.step(torch.zeros_like(actions))
+        actions = policy(obs)
+        # env stepping
+        
+        obs, _, _, _ = env.step(actions)
+        # obs, _, _, _ = env.step(torch.zeros_like(actions)+torch.tensor([0,-3.14,3.14,0,0,0],device='cuda'))
 
     # close the simulator
     env.close()
